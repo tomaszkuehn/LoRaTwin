@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoRaTwin</title>
+<style>
+:root {
+  --bg:#0f0f1a; --card:#1a1a2e; --card2:#16213e; --accent:#00d4ff;
+  --green:#00e676; --yellow:#ffab40; --red:#ff5252; --text:#c8c8dc; --text2:#8888a0;
+  --radius:10px;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+h1 { font-size:1.3rem; font-weight:600; }
+h2 { font-size:1rem; font-weight:600; color:var(--accent); margin-bottom:.6em; }
+.container { max-width:800px; margin:0 auto; padding:1em; }
+
+header { display:flex; justify-content:space-between; align-items:center; padding:1em 0;
+         border-bottom:1px solid #2a2a4a; margin-bottom:1.2em; }
+header .logo { display:flex; align-items:center; gap:.6em; }
+header .logo .dot { width:10px; height:10px; border-radius:50%; background:var(--green);
+                    animation:pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+header .logo .dot.offline { background:var(--red); animation:none; }
+header .ver { color:var(--text2); font-size:.85rem; }
+
+.grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:.8em; margin-bottom:1.2em; }
+.card { background:var(--card); border-radius:var(--radius); padding:.8em; border:1px solid #2a2a4a; }
+.card .label { font-size:.7rem; text-transform:uppercase; color:var(--text2); letter-spacing:.5px; margin-bottom:.3em; }
+.card .value { font-size:1.2rem; font-weight:700; color:#e8e8f0; word-break:break-all; }
+.card .sub { font-size:.7rem; color:var(--text2); margin-top:.2em; }
+
+.lora-info { background:var(--card2); border-radius:var(--radius); padding:.9em 1.1em;
+             margin-bottom:1.2em; border:1px solid #2a4a6a; }
+.lora-info .freq { font-size:1.4rem; font-weight:700; color:var(--accent); }
+.lora-info .meta { display:flex; gap:1.5em; flex-wrap:wrap; margin-top:.4em; font-size:.82rem; color:var(--text2); }
+
+/* -- Config Panel -- */
+.config-panel { background:var(--card2); border-radius:var(--radius); padding:1em 1.2em;
+                margin-bottom:1.2em; border:1px solid #2a4a6a; }
+.config-panel .row { display:flex; gap:1em; flex-wrap:wrap; align-items:end; margin-bottom:.8em; }
+.config-panel .field { display:flex; flex-direction:column; gap:.3em; }
+.config-panel label { font-size:.72rem; text-transform:uppercase; color:var(--text2); letter-spacing:.5px; }
+.config-panel select, .config-panel input { background:#0f0f1a; color:var(--text); border:1px solid #3a3a6a;
+    border-radius:6px; padding:.45em .7em; font-size:.85rem; min-width:200px; }
+.config-panel select:focus, .config-panel input:focus { outline:none; border-color:var(--accent); }
+.config-panel .live-info { font-size:.78rem; color:var(--text2); margin-top:.4em; }
+
+.btn { display:inline-block; padding:.5em 1.2em; background:var(--accent); color:#000;
+       border:none; border-radius:6px; font-weight:600; cursor:pointer; text-decoration:none; font-size:.85rem; }
+.btn:hover { opacity:.85; }
+.btn.danger { background:var(--red); }
+.btn-row { display:flex; gap:.6em; flex-wrap:wrap; margin-top:.8em; }
+
+.upload-zone { background:var(--card); border:2px dashed #3a3a6a; border-radius:var(--radius);
+               padding:1.5em 1em; text-align:center; cursor:pointer; transition:all .2s; margin-bottom:1.2em; }
+.upload-zone:hover, .upload-zone.drag-over { border-color:var(--accent); background:#1a2a3e; }
+.upload-zone .icon { font-size:2rem; margin-bottom:.4em; }
+.upload-zone .txt { font-size:.85rem; color:var(--text2); }
+.upload-zone .txt b { color:var(--accent); }
+.upload-zone input { display:none; }
+
+.progress-wrap { display:none; margin-bottom:1.2em; }
+.progress-wrap.active { display:block; }
+.progress-bar { width:100%; height:12px; background:#2a2a4a; border-radius:6px; overflow:hidden; }
+.progress-bar .fill { height:100%; width:0; background:linear-gradient(90deg, var(--accent), var(--green));
+                       transition:width .3s; border-radius:6px; }
+.progress-text { text-align:center; font-size:.8rem; color:var(--text2); margin-top:.3em; }
+
+.msg { padding:.7em 1em; border-radius:var(--radius); margin-bottom:1em; font-size:.85rem; display:none; }
+.msg.ok { display:block; background:#0a3a1a; color:var(--green); border:1px solid #1a6a2a; }
+.msg.err { display:block; background:#3a0a0a; color:var(--red); border:1px solid #6a1a1a; }
+.msg.info { display:block; background:#1a2a3a; color:var(--accent); border:1px solid #2a4a6a; }
+
+footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
+         border-top:1px solid #2a2a4a; margin-top:1.5em; }
+
+@media (max-width:550px) {
+  .container { padding:.5em; }
+  .config-panel .row { flex-direction:column; }
+  .config-panel select, .config-panel input { min-width:100%; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div class="logo">
+    <div class="dot" id="statusDot"></div>
+    <div>
+      <h1>LoRaTwin</h1>
+      <span class="ver" id="fwVer">v-</span>
+    </div>
+  </div>
+  <div><a href="/update" class="btn" target="_blank">ElegantOTA →</a></div>
+</header>
+
+<!-- Konfiguracja WiFi -->
+<h2>📶 Konfiguracja WiFi</h2>
+<div class="config-panel">
+  <div class="row">
+    <div class="field">
+      <label>Tryb</label>
+      <select id="wifiMode" onchange="onWifiModeChange()">
+        <option value="0">STA — klient (łączy do routera)</option>
+        <option value="1">AP — Access Point (tworzy własną sieć)</option>
+      </select>
+    </div>
+    <div class="field" style="flex:1">
+      <label>SSID (nazwa sieci)</label>
+      <input type="text" id="wifiSsid" placeholder="Nazwa sieci WiFi..." maxlength="32">
+    </div>
+    <div class="field" style="flex:1">
+      <label>Hasło</label>
+      <input type="password" id="wifiPass" placeholder="Hasło (min. 8 znaków dla AP)..." maxlength="64">
+    </div>
+  </div>
+  <div class="live-info" id="wifiLive">--</div>
+  <div class="btn-row">
+    <button class="btn" onclick="saveWifiConfig()">Zapisz i przełącz</button>
+    <span style="font-size:.75rem; color:var(--yellow); margin-left:1em; align-self:center;" id="wifiWarn"></span>
+  </div>
+</div>
+
+<!-- Kafelki info -->
+<div class="grid">
+  <div class="card">
+    <div class="label">WiFi / IP</div>
+    <div class="value" style="font-size:1rem" id="ipAddr">--</div>
+    <div class="sub" id="wifiRssi"></div>
+  </div>
+  <div class="card">
+    <div class="label">Uptime</div>
+    <div class="value" style="font-size:1rem" id="uptime">--</div>
+  </div>
+  <div class="card">
+    <div class="label">Pakiety LoRa</div>
+    <div class="value" id="pktCount">0</div>
+    <div class="sub" id="lastRssiSnr"></div>
+  </div>
+  <div class="card">
+    <div class="label">Free Heap</div>
+    <div class="value" style="font-size:1rem" id="freeHeap">--</div>
+    <div class="sub" id="flashInfo"></div>
+  </div>
+</div>
+
+<!-- LoRa info -->
+<div class="lora-info">
+  <div class="freq" id="loraLabel">869.525 MHz</div>
+  <div class="meta">
+    <span id="loraParams">SF11 / BW250 / CR4/8</span>
+    <span id="freqErr">FreqErr: -- Hz</span>
+    <span>Sync: 0x2B</span>
+  </div>
+</div>
+
+<!-- Konfiguracja radia -->
+<h2>⚙ Konfiguracja Radia</h2>
+<div class="config-panel">
+  <div class="row">
+    <div class="field">
+      <label>Profil</label>
+      <select id="cfgProfile" onchange="onProfileChange()">
+        <option value="0">Meshtastic — sync 0x2B, wybór presetu</option>
+        <option value="1" selected>MeshCore — sync 0x12, SF8/BW62.5/CR4/8</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Częstotliwość</label>
+      <select id="cfgFreq">
+        <option value="868.000">868.000 MHz (EU)</option>
+        <option value="869.525">869.525 MHz (EU Meshtastic)</option>
+        <option value="869.618" selected>869.618 MHz (EU MeshCore)</option>
+        <option value="915.000">915.000 MHz (US)</option>
+      </select>
+    </div>
+    <div class="field" id="presetField">
+      <label>Modem Preset</label>
+      <select id="cfgPreset">
+        <option value="0">SHORT / FAST — SF7, BW250</option>
+        <option value="1">SHORT / SLOW — SF8, BW250</option>
+        <option value="2">MEDIUM / FAST — SF9, BW250</option>
+        <option value="3">MEDIUM / SLOW — SF10, BW250</option>
+        <option value="4" selected>LONG / FAST — SF11, BW250</option>
+        <option value="5">LONG / SLOW — SF12, BW125</option>
+        <option value="6">VERY LONG / SLOW — SF12, BW62.5</option>
+      </select>
+    </div>
+  </div>
+  <div class="live-info" id="liveCfg">Aktualne: MeshCore, 869.618 MHz (SF8, BW62.5, CR4/8)</div>
+  <div class="btn-row">
+    <button class="btn" onclick="saveConfig()">Zapisz i zastosuj</button>
+    <button class="btn danger" onclick="resetConfig()">Reset do domyślnych</button>
+  </div>
+</div>
+
+<!-- Log zdarzeń -->
+<h2>📋 Log zdarzeń</h2>
+<div class="config-panel" style="max-height:300px; overflow-y:auto; padding:.5em 1em;">
+  <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="logTable">
+    <thead><tr style="color:var(--text2); text-align:left;">
+      <th style="padding:2px 6px;">Czas</th><th>Typ</th><th>Dane</th><th>RSSI/SNR</th>
+    </tr></thead>
+    <tbody id="logBody"></tbody>
+  </table>
+  <div class="live-info" id="logEmpty" style="margin-top:.5em;">Brak zdarzeń.</div>
+</div>
+
+<!-- Nadawanie -->
+<h2>📡 Nadaj ramkę</h2>
+<div class="config-panel">
+  <div class="row">
+    <div class="field" style="flex:1">
+      <label>Wiadomość (tekst, max 200 znaków)</label>
+      <input type="text" id="txData" placeholder="Wpisz tekst do wysłania..." maxlength="200" style="min-width:100%">
+    </div>
+  </div>
+  <div class="live-info" id="txInfo">Nagłówek (14 B) + payload</div>
+  <div class="btn-row">
+    <button class="btn" onclick="sendTx()">📤 Wyślij</button>
+  </div>
+</div>
+
+<!-- Upload firmware -->
+<h2>📦 Firmware Update</h2>
+<div class="upload-zone" id="dropZone">
+  <div class="icon">📦</div>
+  <div class="txt">Upuść plik <b>.bin</b> lub <b>kliknij</b> by wybrać</div>
+  <input type="file" id="fileInput" accept=".bin">
+</div>
+<div class="progress-wrap" id="progressWrap">
+  <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
+  <div class="progress-text" id="progressText">Uploading...</div>
+</div>
+<div class="msg" id="msgBox"></div>
+
+<footer>Heltec WiFi LoRa 32 V3 &bull; ESP32-S3 &bull; LoRaTwin v<span id="fwFooter">-</span></footer>
+
+</div>
+
+<script>
+// --- Status ---
+const $ = id => document.getElementById(id);
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    $('ipAddr').textContent = d.ip;
+    $('wifiRssi').textContent = 'RSSI: '+d.wifi_rssi+' dBm';
+    $('uptime').textContent = fmtUptime(d.uptime_s);
+    $('freeHeap').textContent = (d.free_heap/1024).toFixed(0)+' KB';
+    $('flashInfo').textContent = d.chip+' / '+d.flash_mb+' MB flash';
+    $('pktCount').textContent = d.packets_received;
+    $('lastRssiSnr').textContent = 'RSSI: '+d.last_rssi.toFixed(0)+' / SNR: '+d.last_snr.toFixed(1);
+    $('loraLabel').textContent = d.lora_freq_mhz.toFixed(3)+' MHz';
+    $('loraParams').textContent = 'SF'+d.lora_sf+' / BW'+d.lora_bw_khz.toFixed(0)+' / CR4/'+d.lora_cr;
+    $('freqErr').textContent = 'Live RSSI: '+d.current_rssi.toFixed(0)+' dBm  |  FreqErr: '+d.freq_error_hz.toFixed(1)+' Hz';
+    $('fwVer').textContent = 'v'+d.firmware;
+    $('fwFooter').textContent = d.firmware;
+    $('statusDot').className = 'dot'+(d.wifi_connected?'':' offline');
+  } catch(e) { $('statusDot').className='dot offline'; }
+}
+
+function fmtUptime(s) {
+  if(s<60) return s+'s';
+  if(s<3600) return Math.floor(s/60)+'m '+s%60+'s';
+  return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';
+}
+
+// --- Config ---
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config'); const d = await r.json();
+    $('cfgProfile').value = d.profile;
+    $('cfgFreq').value = d.frequency.toFixed(3);
+    $('cfgPreset').value = d.preset;
+    onProfileChange();
+    updateLiveCfg(d);
+  } catch(e) { console.error(e); }
+}
+
+function onProfileChange() {
+  const prof = parseInt($('cfgProfile').value);
+  $('presetField').style.display = prof === 0 ? '' : 'none';
+}
+
+function updateLiveCfg(d) {
+  const profName = d.profile === 1 ? 'MeshCore' : 'Meshtastic';
+  const presetInfo = d.profile === 1
+    ? '(SF'+d.sf+', BW'+d.bw_khz.toFixed(0)+', CR4/'+d.cr+')'
+    : d.preset_name+' (SF'+d.sf+', BW'+d.bw_khz.toFixed(0)+', CR4/'+d.cr+')';
+  $('liveCfg').textContent =
+    'Aktualne: '+profName+', '+d.frequency.toFixed(3)+' MHz '+presetInfo+
+    ', Sync 0x'+d.sync_word.toString(16).toUpperCase()+', TX:'+d.tx_power+'dBm';
+  $('txInfo').textContent = 'Profil: '+profName+', TX: '+d.tx_power+' dBm';
+  $('loraLabel').textContent = '['+profName+'] '+d.lora_freq_mhz.toFixed(3)+' MHz';
+}
+
+async function saveConfig() {
+  const profile = $('cfgProfile').value;
+  const freq = $('cfgFreq').value;
+  const preset = $('cfgPreset').value;
+  const body = 'profile='+profile+'&frequency='+freq+'&preset='+preset;
+  try {
+    const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+    const d = await r.json();
+    if (d.success) {
+      showMsg('ok', 'Zapisano! Radio zrestartowane: '+d.frequency.toFixed(3)+' MHz, '+d.preset_name);
+      loadConfig(); refreshStatus();
+    } else {
+      showMsg('err', 'Błąd zapisywania konfiguracji.');
+    }
+  } catch(e) { showMsg('err', 'Błąd sieci.'); }
+}
+
+async function resetConfig() {
+  if (!confirm('Przywrócić ustawienia domyślne?')) return;
+  $('cfgFreq').value = '869.525';
+  $('cfgPreset').value = '4';
+  await saveConfig();
+}
+
+// --- TX ---
+async function sendTx() {
+  const data = $('txData').value.trim();
+  if (!data) { showMsg('err', 'Wpisz tekst do wysłania.'); return; }
+  try {
+    const r = await fetch('/api/tx', { method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: 'data='+encodeURIComponent(data) });
+    const d = await r.json();
+    if (d.success) showMsg('ok', 'Wysłano '+d.bytes+' bajtów!');
+    else showMsg('err', 'Błąd nadawania.');
+  } catch(e) { showMsg('err', 'Błąd sieci.'); }
+}
+
+// --- Upload ---
+const dropZone = $('dropZone'), fileInput = $('fileInput');
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if(e.dataTransfer.files.length) uploadFirmware(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if(fileInput.files.length) uploadFirmware(fileInput.files[0]); });
+
+function uploadFirmware(file) {
+  if(!file.name.endsWith('.bin')) { showMsg('err','Wybierz plik .bin'); return; }
+  const fd = new FormData(); fd.append('file', file);
+  $('progressWrap').classList.add('active');
+  $('progressFill').style.width='0%';
+  $('progressText').textContent='Uploading '+file.name+'...';
+  hideMsg();
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST','/update');
+  xhr.upload.onprogress = e => {
+    if(e.lengthComputable) { const p=Math.round(e.loaded/e.total*90); $('progressFill').style.width=p+'%'; $('progressText').textContent='Uploading: '+p+'%'; }
+  };
+  xhr.onload = () => {
+    if(xhr.status===200||xhr.status===302) {
+      $('progressFill').style.width='100%';
+      $('progressText').textContent='OK! Restart...';
+      showMsg('ok','Firmware wgrany! Urządzenie się restartuje.');
+    } else { $('progressWrap').classList.remove('active'); showMsg('err','Błąd uploadu (HTTP '+xhr.status+')'); }
+  };
+  xhr.onerror = () => { $('progressWrap').classList.remove('active'); showMsg('err','Błąd sieci.'); };
+  xhr.send(fd);
+}
+
+function showMsg(t,txt) { const m=$('msgBox'); m.className='msg '+t; m.textContent=txt; m.style.display='block'; }
+function hideMsg() { $('msgBox').className='msg'; $('msgBox').style.display='none'; }
+
+// --- Log ---
+const TYPE_LABEL = { 'R':'📥 RX', 'C':'❌ CRC', 'E':'⚡ NRG', 'T':'📤 TX' };
+async function refreshLog() {
+  try {
+    const r = await fetch('/api/log'); const d = await r.json();
+    const events = d.events || [];
+    if (!events.length) { $('logEmpty').style.display='block'; $('logBody').innerHTML=''; return; }
+    $('logEmpty').style.display='none';
+    let html = '';
+    for (let i = events.length-1; i >= Math.max(0, events.length-20); i--) {
+      const e = events[i];
+      const label = TYPE_LABEL[e.type] || '?'+e.type;
+      const detail = e.type==='R' ? e.len+' B' : e.type==='T' ? e.len+' B TX' : e.type==='E' ? 'RSSI>próg' : 'CRC fail';
+      const rssi = e.type==='T' ? e.rssi.toFixed(0)+' dBm' : e.rssi.toFixed(0)+' / '+e.snr.toFixed(1)+' dB';
+      const hex = e.hex ? '<br><span style="font-size:.65rem; color:var(--yellow)">'+e.hex+'</span>' : '';
+      html += '<tr style="border-top:1px solid #2a2a4a;">'+
+        '<td style="padding:2px 6px; color:var(--text2)">'+(e.t/1000).toFixed(1)+'s</td>'+
+        '<td>'+label+'</td><td>'+detail+hex+'</td><td style="color:var(--text2)">'+rssi+'</td></tr>';
+    }
+    $('logBody').innerHTML = html;
+  } catch(e) {}
+}
+
+// --- WiFi Config ---
+let currentWifiMode = 0;
+
+async function loadWifiConfig() {
+  try {
+    const r = await fetch('/api/wifi'); const d = await r.json();
+    currentWifiMode = d.mode === 'ap' ? 1 : 0;
+    $('wifiMode').value = currentWifiMode;
+    $('wifiSsid').value = d.ssid || '';
+    $('wifiPass').value = '';
+    onWifiModeChange();
+    updateWifiLive(d);
+  } catch(e) { console.error('WiFi load error', e); }
+}
+
+function onWifiModeChange() {
+  const m = parseInt($('wifiMode').value);
+  const passField = $('wifiPass');
+  if (m === 1) {
+    // AP mode — hasło wymagane (min 8 znaków)
+    passField.placeholder = 'Hasło AP (min. 8 znaków)';
+    $('wifiWarn').textContent = 'AP: urządzenie utworzy własną sieć. Po zapisie stracisz połączenie — połącz się z nową siecią.';
+  } else {
+    passField.placeholder = 'Hasło sieci WiFi...';
+    $('wifiWarn').textContent = '';
+  }
+}
+
+function updateWifiLive(d) {
+  if (d.mode === 'ap') {
+    $('wifiLive').textContent = 'Tryb AP | SSID: '+d.ssid+' | IP: '+d.ip+' | Podłączone stacje: '+d.stations;
+  } else {
+    const connected = d.connected ? 'Połączono' : 'Rozłączono';
+    $('wifiLive').textContent = 'Tryb STA | SSID: '+d.ssid+' | '+connected+' | IP: '+d.ip+' | RSSI: '+d.rssi+' dBm';
+  }
+}
+
+async function saveWifiConfig() {
+  const mode = parseInt($('wifiMode').value);
+  const ssid = $('wifiSsid').value.trim();
+  const pass = $('wifiPass').value;
+
+  if (!ssid) { showMsg('err', 'Wpisz SSID.'); return; }
+  if (mode === 1 && pass.length < 8) { showMsg('err', 'Tryb AP wymaga hasła (min. 8 znaków).'); return; }
+
+  const body = 'mode='+mode+'&ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(pass);
+  try {
+    const r = await fetch('/api/wifi', { method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
+    const d = await r.json();
+    if (d.success) {
+      if (mode === 1) {
+        showMsg('info', 'AP utworzony! Połącz się z siecią "'+d.ssid+'" i otwórz http://192.168.4.1/');
+      } else {
+        showMsg('info', 'Zapisano! Urządzenie łączy się z "'+d.ssid+'"... Jeśli IP się zmieni, odśwież stronę.');
+      }
+      // Odśwież po chwili (daj WiFi czas na przełączenie)
+      setTimeout(() => { loadWifiConfig(); refreshStatus(); }, 3000);
+    } else {
+      showMsg('err', 'Błąd zapisywania konfiguracji WiFi.');
+    }
+  } catch(e) { showMsg('err', 'Błąd sieci — jeśli zmieniłeś tryb na AP, połącz się z nową siecią.'); }
+}
+
+// --- Start ---
+loadConfig();
+loadWifiConfig();
+refreshStatus();
+refreshLog();
+setInterval(refreshStatus, 2000);
+setInterval(refreshLog, 3000);
+setInterval(loadWifiConfig, 15000);
+</script>
+</body>
+</html>
