@@ -244,6 +244,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 <script>
 // --- Status ---
 const $ = id => document.getElementById(id);
+function escapeHtml(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 let deviceBootMs = 0;  // szacowany moment bootu device (Date.now() - uptime)
 
 async function refreshStatus() {
@@ -420,16 +421,38 @@ async function refreshLog() {
     for (let i = events.length-1; i >= Math.max(0, events.length-20); i--) {
       const e = events[i];
       const label = TYPE_LABEL[e.type] || '?'+e.type;
-      const detail = e.type==='R' ? e.len+' B' : e.type==='T' ? e.len+' B TX' : e.type==='E' ? 'RSSI>próg' : 'CRC fail';
+      let detail = e.type==='R' ? e.len+' B' : e.type==='T' ? e.len+' B TX' : e.type==='E' ? 'RSSI>próg' : 'CRC fail';
       const rssi = e.type==='T' ? e.rssi.toFixed(0)+' dBm' : e.rssi.toFixed(0)+' / '+e.snr.toFixed(1)+' dB';
       const hexHtml = renderHex(e);
       const protoName = e.proto || '?';
       const protoBadge = (e.type === 'R' || e.type === 'T')
         ? '<span style="color:'+(PROTO_COLOR[protoName]||'#888')+'">'+protoName+'</span>'
         : '<span style="color:#555">--</span>';
+      // Pełne pola MeshCore
+      let mcInfo = '';
+      if (e.proto === 'MeshCore' && e.mcRoute) {
+        mcInfo = '<br><span style="font-size:.68rem;color:#aab">'+
+          'Route: <b style="color:#eee">'+e.mcRoute+'</b>  '+
+          'Payload: <b style="color:#0f0">'+e.mcPayload+'</b>  '+
+          'Ver: <b style="color:#eee">v'+e.mcVer+'</b>  '+
+          'Hops: <b style="color:#eee">'+e.mcHops+'</b>  '+
+          'HashSz: <b style="color:#eee">'+e.mcHashSz+'B</b>  '+
+          'PathLen: <b style="color:#eee">'+e.mcPathLen+'B</b>';
+        if (e.mcTransport) {
+          mcInfo += '  TC1=<b style="color:#ff0">0x'+e.mcTC1.toString(16).toUpperCase().padStart(4,'0')+'</b>'+
+                    '  TC2=<b style="color:#ff0">0x'+e.mcTC2.toString(16).toUpperCase().padStart(4,'0')+'</b>';
+        }
+        mcInfo += '</span>';
+        // Zdekodowany payload
+        if (e.mcPayloadTxt) {
+          mcInfo += '<br><span style="font-size:.7rem;color:#8f8">↳ '+escapeHtml(e.mcPayloadTxt)+'</span>';
+        }
+      }
       html += '<tr style="border-top:1px solid #2a2a4a;">'+
-        '<td style="padding:2px 6px; color:var(--text2)">'+fmtTime(e.t)+'</td>'+
-        '<td>'+label+'</td><td>'+protoBadge+'</td><td>'+detail+hexHtml+'</td><td style="color:var(--text2)">'+rssi+'</td></tr>';
+        '<td style="padding:2px 6px; color:var(--text2);vertical-align:top">'+fmtTime(e.t)+'</td>'+
+        '<td style="vertical-align:top">'+label+'</td><td style="vertical-align:top">'+protoBadge+'</td>'+
+        '<td>'+detail+mcInfo+hexHtml+'</td>'+
+        '<td style="color:var(--text2);vertical-align:top">'+rssi+'</td></tr>';
     }
     $('logBody').innerHTML = html;
   } catch(e) {}

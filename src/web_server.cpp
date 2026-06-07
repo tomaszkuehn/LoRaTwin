@@ -198,6 +198,45 @@ static void handleApiLog(AsyncWebServerRequest* request) {
             ev["rssi"] = logBuffer[idx].rssi;
             ev["snr"]  = logBuffer[idx].snr;
             ev["proto"] = proto_to_str(logBuffer[idx].proto);
+            // Pola MeshCore
+            if (logBuffer[idx].proto == PROTO_MESHCORE) {
+                ev["mcRoute"]   = mc_route_type_name(logBuffer[idx].mcRouteType);
+                ev["mcRouteId"] = logBuffer[idx].mcRouteType;
+                ev["mcPayload"] = mc_payload_type_name(logBuffer[idx].mcPayloadType);
+                ev["mcPayloadId"] = logBuffer[idx].mcPayloadType;
+                ev["mcVer"]     = logBuffer[idx].mcPayloadVer + 1;
+                ev["mcHops"]    = logBuffer[idx].mcHopCount;
+                ev["mcHashSz"]  = logBuffer[idx].mcHashSize;
+                ev["mcPathLen"] = logBuffer[idx].mcHopCount * logBuffer[idx].mcHashSize;
+                ev["mcTransport"] = logBuffer[idx].mcHasTransport;
+                if (logBuffer[idx].mcHasTransport) {
+                    ev["mcTC1"] = logBuffer[idx].mcTransport1;
+                    ev["mcTC2"] = logBuffer[idx].mcTransport2;
+                }
+                // Dekoduj payload
+                if (logBuffer[idx].dataLen > 0 && logBuffer[idx].mcPayloadType <= 0x0F) {
+                    MeshCoreInfo tmpInfo;
+                    tmpInfo.payloadType = logBuffer[idx].mcPayloadType;
+                    tmpInfo.payloadOffset = 0;
+                    // Odtwórz payloadOffset z hopCount i hashSize
+                    tmpInfo.routeType = logBuffer[idx].mcRouteType;
+                    tmpInfo.payloadVersion = logBuffer[idx].mcPayloadVer;
+                    tmpInfo.hopCount = logBuffer[idx].mcHopCount;
+                    tmpInfo.hashSize = logBuffer[idx].mcHashSize;
+                    tmpInfo.hasTransport = logBuffer[idx].mcHasTransport;
+                    tmpInfo.pathLen = logBuffer[idx].mcHopCount * logBuffer[idx].mcHashSize;
+                    // Oblicz payloadOffset
+                    uint8_t off = 1;  // header
+                    if (tmpInfo.hasTransport) off += 4;
+                    off += 1;  // path_length
+                    off += tmpInfo.pathLen;
+                    tmpInfo.payloadOffset = off;
+                    char payloadBuf[128];
+                    decode_payload_summary(logBuffer[idx].data, logBuffer[idx].dataLen,
+                                           tmpInfo, payloadBuf, sizeof(payloadBuf));
+                    ev["mcPayloadTxt"] = payloadBuf;
+                }
+            }
             // Hex dump pierwszych bajtów
             if (logBuffer[idx].dataLen > 0) {
                 char hex[LOG_DATA_MAX * 3 + 1];

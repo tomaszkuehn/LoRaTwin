@@ -140,7 +140,7 @@ void display_render() {
     u8g2.setCursor(0, 34);
     u8g2.printf("RSSI:%.0f dBm  SNR:%.1f dB", currentRssi, lastSnr);
 
-    // ––– LINIA 4: RX counter + protokół (y=43) –––
+    // ––– LINIA 4: RX counter + protokół + payload type (y=43) –––
     u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setCursor(0, 46);
     const char* protoLabel = "?";
@@ -150,7 +150,12 @@ void display_render() {
         case PROTO_OTHER:      protoLabel = "??"; break;
         default:               break;
     }
-    u8g2.printf("RX: %u %s", packetCount, protoLabel);
+    if (lastProto == PROTO_MESHCORE && lastMcInfo.payloadType <= 0x0F) {
+        u8g2.printf("RX:%u %s/%s", packetCount, protoLabel,
+                    mc_payload_type_name(lastMcInfo.payloadType));
+    } else {
+        u8g2.printf("RX: %u %s", packetCount, protoLabel);
+    }
     u8g2.setFont(u8g2_font_5x7_tf);
 
     // ––– Stopka — IP / status (y=63) –––

@@ -44,7 +44,8 @@ float                      lastSnr        = 0.0f;
 float                      lastFreqError  = 0.0f;
 volatile float             currentRssi    = -200.0f;  // volatile dla współdzielenia ISR/loop
 LoraPacket                 lastPacket;
-ProtoType                  lastProto     = PROTO_UNKNOWN;   // protokół ostatniej ramki
+ProtoType                  lastProto     = PROTO_UNKNOWN;
+MeshCoreInfo               lastMcInfo;                        // ostatni zdekodowany nagłówek
 
 // ––– Non-blocking LED blink state –––
 static uint32_t ledBlinkUntil = 0;
@@ -82,14 +83,25 @@ int          logCount = 0;
 
 static void log_add(char type, uint8_t len, float rssi, float snr,
                     const uint8_t* raw = nullptr, uint8_t rawLen = 0,
-                    ProtoType proto = PROTO_UNKNOWN) {
+                    ProtoType proto = PROTO_UNKNOWN,
+                    uint8_t mcRT = 0, uint8_t mcPT = 0, uint8_t mcPV = 0,
+                    uint8_t mcHC = 0, uint8_t mcHS = 1, bool mcHT = false,
+                    uint16_t mcT1 = 0, uint16_t mcT2 = 0) {
     int idx = (logHead + 1) % LOG_CAPACITY;
-    logBuffer[idx].timestamp = millis();
-    logBuffer[idx].type      = type;
-    logBuffer[idx].len       = len;
-    logBuffer[idx].rssi      = rssi;
-    logBuffer[idx].snr       = snr;
-    logBuffer[idx].proto     = proto;
+    logBuffer[idx].timestamp    = millis();
+    logBuffer[idx].type         = type;
+    logBuffer[idx].len          = len;
+    logBuffer[idx].rssi         = rssi;
+    logBuffer[idx].snr          = snr;
+    logBuffer[idx].proto        = proto;
+    logBuffer[idx].mcRouteType  = mcRT;
+    logBuffer[idx].mcPayloadType = mcPT;
+    logBuffer[idx].mcPayloadVer = mcPV;
+    logBuffer[idx].mcHopCount   = mcHC;
+    logBuffer[idx].mcHashSize   = mcHS;
+    logBuffer[idx].mcHasTransport = mcHT;
+    logBuffer[idx].mcTransport1 = mcT1;
+    logBuffer[idx].mcTransport2 = mcT2;
     if (raw && rawLen > 0) {
         logBuffer[idx].dataLen = min(rawLen, (uint8_t)LOG_DATA_MAX);
         memcpy(logBuffer[idx].data, raw, logBuffer[idx].dataLen);
@@ -110,88 +122,268 @@ const char* proto_to_str(ProtoType p) {
     }
 }
 
-// ––– Klasyfikator ramek –––
-// Analizuje surowe bajty ramki i określa protokół.
-//
-// Ponieważ SX1262 filtruje sprzętowo po sync word, odebrane ramki
-// pochodzą z protokołu zgodnego z aktualnym profilem:
-//   MeshCore (sync 0x12): własny format z Data/varintami
-//   Meshtastic (sync 0x2B): MeshPacket z fixed32
-//
-// Klasyfikacja jest dwupoziomowa:
-//   1. Sygnatura bajtowa (pewna) — rozpoznane tagi protobuf
-//   2. Fallback do aktywnego profilu (gdy sygnatura niejasna)
-//
+// ––– Nazwy pól MeshCore –––
+const char* mc_route_type_name(uint8_t rt) {
+    switch (rt) {
+        case 0: return "TransportFlood";
+        case 1: return "Flood";
+        case 2: return "Direct";
+        case 3: return "TransportDirect";
+        default: return "?";
+    }
+}
+
+const char* mc_payload_type_name(uint8_t pt) {
+    switch (pt) {
+        case 0x00: return "REQ";
+        case 0x01: return "RESPONSE";
+        case 0x02: return "TXT_MSG";
+        case 0x03: return "ACK";
+        case 0x04: return "ADVERT";
+        case 0x05: return "GRP_TXT";
+        case 0x06: return "GRP_DATA";
+        case 0x07: return "ANON_REQ";
+        case 0x08: return "PATH";
+        case 0x09: return "TRACE";
+        case 0x0A: return "MULTIPART";
+        case 0x0B: return "CONTROL";
+        case 0x0F: return "RAW_CUSTOM";
+        default:   return "?";
+    }
+}
+
+// ––– Dekoder pakietu MeshCore (wg packet_format.md) –––
+// Format: [header 1B] [transport_codes 4B?] [path_length 1B] [path N B] [payload]
+// Header: 0bVVPPPPRR  (V=version, P=payloadType, R=routeType)
+bool decode_meshcore(const uint8_t* data, uint8_t len, MeshCoreInfo& info) {
+    if (!data || len < 2) return false;
+    memset(&info, 0, sizeof(info));
+
+    uint8_t hdr = data[0];
+    info.routeType      = hdr & 0x03;
+    info.payloadType    = (hdr >> 2) & 0x0F;
+    info.payloadVersion = (hdr >> 6) & 0x03;
+
+    uint8_t offset = 1;
+
+    // Transport codes (tylko dla TRANSPORT_FLOOD i TRANSPORT_DIRECT)
+    info.hasTransport = (info.routeType == 0 || info.routeType == 3);
+    if (info.hasTransport) {
+        if (offset + 4 > len) return false;
+        info.transport1 = (uint16_t)data[offset] | ((uint16_t)data[offset+1] << 8);
+        info.transport2 = (uint16_t)data[offset+2] | ((uint16_t)data[offset+3] << 8);
+        offset += 4;
+    }
+
+    // Path length (koduje hop count + hash size)
+    if (offset >= len) return false;
+    uint8_t pl = data[offset];
+    offset++;
+
+    info.hopCount = pl & 0x3F;        // bity 0-5
+    uint8_t hsCode = (pl >> 6) & 0x03; // bity 6-7 — hash size - 1
+    info.hashSize = hsCode + 1;        // 1, 2, lub 3 bajty
+    if (hsCode == 3) info.hashSize = 4; // 0b11 = 4 bajty (zarezerwowane)
+
+    info.pathLen = info.hopCount * info.hashSize;
+    if (info.pathLen > 64) return false; // MAX_PATH_SIZE
+
+    if (offset + info.pathLen > len) return false;
+    offset += info.pathLen;
+
+    info.payloadOffset = offset;
+    return true;
+}
+
+// ––– Klasyfikator protokołu –––
+// Próbuje zdekodować nagłówek MeshCore. Jeśli się uda → PROTO_MESHCORE.
+// Jeśli nie → fallback do aktywnego profilu (sync word filtruje sprzętowo).
 ProtoType classify_protocol(const uint8_t* data, uint8_t len) {
     if (!data || len < 2) return PROTO_UNKNOWN;
 
-    // Aktywny profil jako fallback
     ProtoType profileDefault = (g_settings.profile == PROFILE_MESHCORE)
                                ? PROTO_MESHCORE : PROTO_MESHTASTIC;
 
-    // Pomiń pierwszy bajt (nagłówek aplikacyjny — hop_start/hop_limit/want_ack)
-    const uint8_t* p = data + 1;
-    const uint8_t* end = data + len;
-
-    if (p >= end) return profileDefault;
-
-    uint8_t firstTag = *p;
-    uint8_t firstField = firstTag >> 3;
-    uint8_t firstWire  = firstTag & 0x07;
-
-    // --- Rozpoznane sygnatury ---
-
-    // Meshtastic MeshPacket: field 1 (from) fixed32 → tag 0x0D
-    if (firstTag == 0x0D && len >= 7) {
-        return PROTO_MESHTASTIC;
-    }
-
-    // Data message (MeshCore lub Meshtastic decoded): field 1 (portnum) varint → tag 0x08
-    if (firstTag == 0x08) {
-        p++;
-        while (p < end && (*p & 0x80)) p++;
-        if (p < end) p++;
-
-        while (p < end) {
-            uint8_t tag = *p;
-            uint8_t fn  = tag >> 3;
-            uint8_t wt  = tag & 0x07;
-            p++;
-
-            if (wt == 0) {
-                while (p < end && (*p & 0x80)) p++;
-                if (p < end) p++;
-            } else if (wt == 2) {
-                if (p >= end) break;
-                uint32_t vlen = 0;
-                int shift = 0;
-                while (p < end && (*p & 0x80)) { vlen |= (uint32_t)(*p & 0x7F) << shift; shift += 7; p++; }
-                if (p >= end) break;
-                vlen |= (uint32_t)(*p & 0x7F) << shift;
-                p++;
-                if (p + vlen > end) break;
-                p += vlen;
-            } else if (wt == 5) {
-                if (p + 4 > end) break;
-                p += 4;
-            } else {
-                break;
-            }
-
-            if (fn == 4 || fn == 5 || fn == 6) {
-                if (wt == 5) return PROTO_MESHTASTIC;   // fixed32 → Meshtastic Data
-                if (wt == 0) return PROTO_MESHCORE;      // varint → MeshCore
-            }
-        }
-
-        // Sam tag 0x08 + poprawny protobuf → domyślnie MeshCore
+    // Próba dekodowania MeshCore
+    MeshCoreInfo dummy;
+    if (decode_meshcore(data, len, dummy)) {
         return PROTO_MESHCORE;
     }
 
-    // --- Fallback: użyj aktywnego profilu ---
-    // Ramka ma nieznaną strukturę bajtową, ale radio odebrało ją
-    // z sync word zgodnym z profilem → klasyfikuj zgodnie z profilem.
+    // Meshtastic MeshPacket: field 1 (from) fixed32 → tag 0x0D
+    if (len >= 7 && data[1] == 0x0D) {
+        return PROTO_MESHTASTIC;
+    }
+
+    // Data message: field 1 (portnum) varint → tag 0x08
+    if (len >= 3 && data[1] == 0x08) {
+        return PROTO_MESHCORE;  // stary format TX tego projektu
+    }
+
     return profileDefault;
+}
+
+// ––– Odczyt 32-bit LE –––
+static uint32_t read32le(const uint8_t* p) {
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+// ––– Dekoder payloadu MeshCore –––
+void decode_payload_summary(const uint8_t* data, uint8_t len,
+                            const MeshCoreInfo& info, char* buf, size_t bufSize) {
+    if (!data || !buf || bufSize == 0) return;
+    buf[0] = '\0';
+    if (len < info.payloadOffset) return;
+    const uint8_t* p = data + info.payloadOffset;
+    uint16_t remain = len - info.payloadOffset;
+
+    switch (info.payloadType) {
+
+    // --- ADVERT (0x04) ---
+    case 0x04: {
+        if (remain < 100) { snprintf(buf, bufSize, "ADVERT: too short (%uB)", remain); return; }
+        // pubkey prefix (first 4 bytes)
+        snprintf(buf, bufSize, "pub=0x%02X%02X%02X%02X",
+                 p[0], p[1], p[2], p[3]);
+        size_t pos = strlen(buf);
+        // timestamp
+        uint32_t ts = read32le(p + 32);
+        if (ts > 1000000000) {
+            snprintf(buf + pos, bufSize - pos, " ts=%u", ts);
+            pos = strlen(buf);
+        }
+        // appdata (after 32+4+64 = 100 bytes)
+        if (remain > 100) {
+            const uint8_t* ap = p + 100;
+            uint16_t apLen = remain - 100;
+            if (apLen > 0) {
+                uint8_t flags = ap[0];
+                snprintf(buf + pos, bufSize - pos, " flags=0x%02X", flags);
+                pos = strlen(buf);
+                uint8_t off = 1;
+                // lat/lon
+                if ((flags & 0x10) && off + 8 <= apLen) {
+                    int32_t lat = (int32_t)read32le(ap + off);
+                    int32_t lon = (int32_t)read32le(ap + off + 4);
+                    snprintf(buf + pos, bufSize - pos, " lat=%.5f lon=%.5f",
+                             lat / 1000000.0, lon / 1000000.0);
+                    pos = strlen(buf);
+                    off += 8;
+                }
+                // feature fields
+                if ((flags & 0x20) && off + 2 <= apLen) off += 2;
+                if ((flags & 0x40) && off + 2 <= apLen) off += 2;
+                // name
+                if ((flags & 0x80) && off < apLen) {
+                    uint8_t nameLen = min((uint16_t)(apLen - off), (uint16_t)40);
+                    snprintf(buf + pos, bufSize - pos, " name='%.*s'", nameLen, ap + off);
+                }
+            }
+        }
+        return;
+    }
+
+    // --- TXT_MSG (0x02) ---
+    case 0x02: {
+        if (remain < 6) { snprintf(buf, bufSize, "TXT: too short (%uB)", remain); return; }
+        uint32_t ts = read32le(p);
+        uint8_t txtType = p[4] >> 2;
+        uint8_t attempt = p[4] & 0x03;
+        const char* tname = (txtType == 0) ? "text" : (txtType == 1) ? "CLI" : "signed";
+        snprintf(buf, bufSize, "%s #%u ", tname, attempt);
+        size_t pos = strlen(buf);
+        uint16_t msgLen = remain - 5;
+        if (msgLen > 0) {
+            uint8_t show = min(msgLen, (uint16_t)(bufSize - pos - 4));
+            memcpy(buf + pos, p + 5, show);
+            buf[pos + show] = '\0';
+            if (msgLen > show) strcat(buf, "...");
+        }
+        return;
+    }
+
+    // --- ACK (0x03) ---
+    case 0x03: {
+        if (remain < 4) { snprintf(buf, bufSize, "ACK: too short (%uB)", remain); return; }
+        uint32_t chk = read32le(p);
+        snprintf(buf, bufSize, "chk=0x%08X", chk);
+        return;
+    }
+
+    // --- REQ (0x00), RESPONSE (0x01), PATH (0x08) ---
+    case 0x00:
+    case 0x01:
+    case 0x08: {
+        if (remain < 4) { snprintf(buf, bufSize, "%s: too short (%uB)",
+                                     mc_payload_type_name(info.payloadType), remain); return; }
+        snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X enc=%uB",
+                 p[0], p[1],
+                 (uint16_t)p[2] | ((uint16_t)p[3] << 8),
+                 remain - 4);
+        return;
+    }
+
+    // --- ANON_REQ (0x07) ---
+    case 0x07: {
+        if (remain < 35) { snprintf(buf, bufSize, "ANON_REQ: too short (%uB)", remain); return; }
+        snprintf(buf, bufSize, "dst=0x%02X pub=0x%02X%02X... mac=0x%04X enc=%uB",
+                 p[0], p[1], p[2],
+                 (uint16_t)p[33] | ((uint16_t)p[34] << 8),
+                 remain - 35);
+        return;
+    }
+
+    // --- GRP_TXT (0x05), GRP_DATA (0x06) ---
+    case 0x05:
+    case 0x06: {
+        if (remain < 3) { snprintf(buf, bufSize, "%s: too short (%uB)",
+                                     mc_payload_type_name(info.payloadType), remain); return; }
+        snprintf(buf, bufSize, "ch=0x%02X mac=0x%04X enc=%uB",
+                 p[0],
+                 (uint16_t)p[1] | ((uint16_t)p[2] << 8),
+                 remain - 3);
+        return;
+    }
+
+    // --- TRACE (0x09) ---
+    case 0x09: {
+        snprintf(buf, bufSize, "TRACE: %uB payload", remain);
+        return;
+    }
+
+    // --- MULTIPART (0x0A) ---
+    case 0x0A: {
+        snprintf(buf, bufSize, "MULTIPART: %uB payload", remain);
+        return;
+    }
+
+    // --- CONTROL (0x0B) ---
+    case 0x0B: {
+        if (remain < 1) { snprintf(buf, bufSize, "CONTROL: empty"); return; }
+        uint8_t subType = p[0] >> 4;
+        const char* subName = "?";
+        switch (subType) {
+            case 0x8: subName = "DISCOVER_REQ"; break;
+            case 0x9: subName = "DISCOVER_RESP"; break;
+            default: break;
+        }
+        snprintf(buf, bufSize, "sub=%s(%u) data=%uB", subName, subType, remain - 1);
+        return;
+    }
+
+    // --- RAW_CUSTOM (0x0F) ---
+    case 0x0F: {
+        snprintf(buf, bufSize, "RAW_CUSTOM: %uB", remain);
+        return;
+    }
+
+    // --- reserved / unknown ---
+    default: {
+        snprintf(buf, bufSize, "%uB payload", remain);
+        return;
+    }
+    }
 }
 
 // ––– Sprzęt LoRa –––
@@ -416,10 +608,43 @@ void lora_process() {
 
         ProtoType proto = classify_protocol(pkt.data, pkt.len);
         lastProto = proto;
-        log_add('R', pkt.len, pkt.rssi, pkt.snr, pkt.data, pkt.len, proto);
 
-        Serial.printf("[LoRa] RX #%u | %s | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
-                      packetCount, proto_to_str(proto), pkt.rssi, pkt.snr, pkt.len);
+        // Dekoduj nagłówek MeshCore
+        MeshCoreInfo mc;
+        bool mcValid = (proto == PROTO_MESHCORE) && decode_meshcore(pkt.data, pkt.len, mc);
+        if (mcValid) lastMcInfo = mc;
+
+        log_add('R', pkt.len, pkt.rssi, pkt.snr, pkt.data, pkt.len, proto,
+                mcValid ? mc.routeType : 0,
+                mcValid ? mc.payloadType : 0,
+                mcValid ? mc.payloadVersion : 0,
+                mcValid ? mc.hopCount : 0,
+                mcValid ? mc.hashSize : 1,
+                mcValid ? mc.hasTransport : false,
+                mcValid ? mc.transport1 : 0,
+                mcValid ? mc.transport2 : 0);
+
+        if (mcValid) {
+            // Pełny dump MeshCore
+            Serial.printf("[LoRa] RX #%u | MeshCore | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
+                          packetCount, pkt.rssi, pkt.snr, pkt.len);
+            Serial.printf("       Route=%s Payload=%s Ver=v%u Hops=%u",
+                          mc_route_type_name(mc.routeType),
+                          mc_payload_type_name(mc.payloadType),
+                          mc.payloadVersion + 1,
+                          mc.hopCount);
+            if (mc.hasTransport) {
+                Serial.printf(" TC1=0x%04X TC2=0x%04X", mc.transport1, mc.transport2);
+            }
+            Serial.printf(" PathLen=%u\n", mc.pathLen);
+            // Dekoduj payload
+            char payloadBuf[128];
+            decode_payload_summary(pkt.data, pkt.len, mc, payloadBuf, sizeof(payloadBuf));
+            Serial.printf("       Payload: %s\n", payloadBuf);
+        } else {
+            Serial.printf("[LoRa] RX #%u | %s | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
+                          packetCount, proto_to_str(proto), pkt.rssi, pkt.snr, pkt.len);
+        }
 
         // Hex dump w monitorze szeregowym (pełna ramka)
         Serial.print(F("       "));
@@ -493,15 +718,48 @@ void lora_reset_history() {
     lastEnergySeen   = 0;
 }
 
-// ––– TX: nadawanie ramki w formacie Meshtastic / MeshCore –––
-// Format ramki: [1B LoRa header] [protobuf-encoded Data message]
-// Data message fields: portnum(1), payload(2), dest(4), sender(5), packet_id(6), hop_limit(11)
+// ––– TX: nadawanie ramki –––
+// MeshCore (wg packet_format.md):
+//   [header 1B] [transport_codes 4B?] [path_length 1B] [path N B] [payload]
+//   Header: 0bVVPPPPRR  (V=version, P=payloadType, R=routeType)
+//   Dla TXT_MSG/Flood: [0x09] [0x00] [payload]   (tylko 2 B overhead)
+//
+// Meshtastic (stary format protobuf — do usunięcia po migracji):
+//   [1B LoRa header 0x33] [Data protobuf]
+//
 static uint32_t txPacketId = 0;
 
-bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
-    if (payloadLen > 200) return false;  // maks ~200 B payloadu + protobuf overhead
+// Zbuduj ramkę MeshCore
+static uint8_t build_meshcore_frame(uint8_t* buf, const uint8_t* payload, uint8_t payloadLen) {
+    // Header: v1, TXT_MSG, Flood
+    uint8_t hdr = (0 << 6)   // version = 0 (v1)
+                | (0x02 << 2)  // payloadType = TXT_MSG
+                | (1);         // routeType = Flood
+    buf[0] = hdr;
+    buf[1] = 0x00;  // path_length: 0 hops, 1-byte hash
+    if (payloadLen > 0) {
+        memcpy(buf + 2, payload, payloadLen);
+    }
+    return 2 + payloadLen;
+}
 
-    // LED — sygnalizacja nadawania (włącz przed TX, timer zgasi automatycznie)
+// Zbuduj ramkę Meshtastic (stary format protobuf)
+static uint8_t build_meshtastic_frame(uint8_t* buf, const uint8_t* payload, uint8_t payloadLen) {
+    uint8_t* p = buf;
+    *p++ = 0x33;  // LoRa header
+    p = pb_write_varint_field(p, 1, 1);              // portnum=TEXT_MESSAGE_APP
+    p = pb_write_bytes_field(p, 2, payload, payloadLen); // payload
+    p = pb_write_varint_field(p, 4, 0xFFFFFFFF);     // dest=broadcast
+    p = pb_write_varint_field(p, 5, g_settings.nodeId);  // sender
+    p = pb_write_varint_field(p, 6, txPacketId++);   // packet_id
+    p = pb_write_varint_field(p, 11, 3);             // hop_limit
+    return p - buf;
+}
+
+bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
+    if (payloadLen > 184) return false;  // MAX_PACKET_PAYLOAD
+
+    // LED — sygnalizacja nadawania
     digitalWrite(PIN_LED, HIGH);
     lora_led_blink_start(200);
 
@@ -519,50 +777,45 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
     // Ustaw moc TX z ustawień
     radio.setOutputPower(g_settings.txPower);
 
-    // ––– Zbuduj ramkę Meshtastic/MeshCore –––
+    // ––– Zbuduj ramkę –––
     uint8_t buf[256];
-    uint8_t* p = buf;
+    uint8_t totalLen;
+    ProtoType txProto;
+    MeshCoreInfo mcTx;
 
-    // 1. LoRa header byte: hopStart=3, hopLimit=3, wantAck=0
-    //    Bits: [7:4]=hopStart, [3]=reserved, [2:1]=hopLimit, [0]=wantAck
-    //    0x30 | 0x03 = 0x33
-    *p++ = 0x33;
+    if (g_settings.profile == PROFILE_MESHCORE) {
+        totalLen = build_meshcore_frame(buf, payload, payloadLen);
+        txProto = PROTO_MESHCORE;
+        // Wypełnij info dla logu
+        memset(&mcTx, 0, sizeof(mcTx));
+        mcTx.routeType = 1;  // Flood
+        mcTx.payloadType = 0x02;  // TXT_MSG
+        mcTx.payloadVersion = 0;  // v1
+        mcTx.hopCount = 0;
+        mcTx.hashSize = 1;
+        mcTx.hasTransport = false;
+        mcTx.payloadOffset = 2;
+        mcTx.pathLen = 0;
+    } else {
+        totalLen = build_meshtastic_frame(buf, payload, payloadLen);
+        txProto = PROTO_MESHTASTIC;
+    }
 
-    // 2. Protobuf Data message
-    //
-    //    Field 1 (portnum): varint → tag 0x08, wire_type 0
-    //    PortNum.TEXT_MESSAGE_APP = 1
-    p = pb_write_varint_field(p, 1, 1);
-
-    //    Field 2 (payload): length-delimited → tag 0x12, wire_type 2
-    p = pb_write_bytes_field(p, 2, payload, payloadLen);
-
-    //    Field 4 (dest): varint → tag 0x20, wire_type 0
-    //    Broadcast = 0xFFFFFFFF
-    p = pb_write_varint_field(p, 4, 0xFFFFFFFF);
-
-    //    Field 5 (sender): varint → tag 0x28, wire_type 0
-    p = pb_write_varint_field(p, 5, g_settings.nodeId);
-
-    //    Field 6 (packet_id): varint → tag 0x30, wire_type 0
-    p = pb_write_varint_field(p, 6, txPacketId++);
-
-    //    Field 11 (hop_limit): varint → tag 0x58, wire_type 0
-    p = pb_write_varint_field(p, 11, 3);
-
-    uint8_t totalLen = p - buf;
-
-    ProtoType txProto = (g_settings.profile == PROFILE_MESHCORE) ? PROTO_MESHCORE : PROTO_MESHTASTIC;
-
-    Serial.printf("[LoRa] TX #%u | %s | %u B | %d dBm | timeout ~%lu ms\n",
-                  txPacketId - 1, proto_to_str(txProto), totalLen, g_settings.txPower,
-                  5 + (radio.getTimeOnAir(totalLen) * 5) / 1000);
+    Serial.printf("[LoRa] TX #%u | %s | %u B payload | frame=%u B | %d dBm\n",
+                  txPacketId++, proto_to_str(txProto), payloadLen, totalLen, g_settings.txPower);
+    if (txProto == PROTO_MESHCORE) {
+        Serial.printf("       Header=0x%02X  Route=%s  Payload=%s  v%u  Hops=%u\n",
+                      buf[0],
+                      mc_route_type_name(mcTx.routeType),
+                      mc_payload_type_name(mcTx.payloadType),
+                      mcTx.payloadVersion + 1,
+                      mcTx.hopCount);
+    }
 
     int state = radio.transmit(buf, totalLen);
 
     if (state != RADIOLIB_ERR_NONE) {
         Serial.printf("[LoRa] TX error, code: %d\n", state);
-        // Próba powrotu do RX mimo błędu
         radio.setDio1Action(onLoraPacket);
         s = radio.startReceive();
         if (s != RADIOLIB_ERR_NONE) {
@@ -572,7 +825,10 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
         return false;
     }
 
-    log_add('T', totalLen, g_settings.txPower, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen), txProto);
+    log_add('T', totalLen, g_settings.txPower, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen), txProto,
+            mcTx.routeType, mcTx.payloadType, mcTx.payloadVersion,
+            mcTx.hopCount, mcTx.hashSize, mcTx.hasTransport,
+            mcTx.transport1, mcTx.transport2);
 
     // Wróć do nasłuchu
     radio.setDio1Action(onLoraPacket);

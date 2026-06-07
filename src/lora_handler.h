@@ -91,12 +91,38 @@ bool          lora_led_blink_active();
 // ––– Identyfikacja protokołu –––
 enum ProtoType : uint8_t {
     PROTO_UNKNOWN   = 0,   // nie udało się sklasyfikować
-    PROTO_MESHCORE  = 1,   // MeshCore — Data z varintami
+    PROTO_MESHCORE  = 1,   // MeshCore
     PROTO_MESHTASTIC = 2,  // Meshtastic — MeshPacket z fixed32
     PROTO_OTHER     = 3    // inny protokół (RAW, własny, itp.)
 };
 
 const char* proto_to_str(ProtoType p);
+
+// ––– MeshCore — nazwy pól –––
+const char* mc_route_type_name(uint8_t rt);
+const char* mc_payload_type_name(uint8_t pt);
+
+// ––– Zdekodowany nagłówek MeshCore –––
+struct MeshCoreInfo {
+    uint8_t  routeType;       // 0-3
+    uint8_t  payloadType;     // 0-15
+    uint8_t  payloadVersion;  // 0-3
+    uint8_t  hopCount;        // 0-63
+    uint8_t  hashSize;        // 1, 2, lub 3 bajty na hash
+    bool     hasTransport;    // transport codes present
+    uint16_t transport1;      // transport code 1 (jeśli hasTransport)
+    uint16_t transport2;      // transport code 2 (jeśli hasTransport)
+    uint8_t  payloadOffset;   // offset do payloadu
+    uint8_t  pathLen;         // długość ścieżki w bajtach
+};
+
+bool decode_meshcore(const uint8_t* data, uint8_t len, MeshCoreInfo& info);
+
+// ––– Dekoder payloadu MeshCore –––
+// Zwraca tekstowy opis payloadu (max 128 znaków).
+// Wywołujący zapewnia buf o rozmiarze >= 128.
+void decode_payload_summary(const uint8_t* data, uint8_t len,
+                            const MeshCoreInfo& info, char* buf, size_t bufSize);
 
 // ––– Log zdarzeń –––
 #define LOG_CAPACITY 64
@@ -110,12 +136,22 @@ struct LogEntry {
     uint8_t  dataLen;         // ile bajtów w data[]
     uint8_t  data[LOG_DATA_MAX];
     ProtoType proto;          // typ protokołu (tylko dla 'R' i 'T')
+    // ––– Pola MeshCore (ważne tylko gdy proto == PROTO_MESHCORE) –––
+    uint8_t  mcRouteType;     // 0-3
+    uint8_t  mcPayloadType;   // 0-15
+    uint8_t  mcPayloadVer;    // 0-3
+    uint8_t  mcHopCount;      // 0-63
+    uint8_t  mcHashSize;      // 1, 2, lub 3 bajty
+    bool     mcHasTransport;  // transport codes present
+    uint16_t mcTransport1;    // transport code 1
+    uint16_t mcTransport2;    // transport code 2
 };
 
 extern LogEntry      logBuffer[LOG_CAPACITY];
 extern volatile int  logHead;   // index najnowszego wpisu
 extern int           logCount;  // liczba wpisów (max LOG_CAPACITY)
 extern ProtoType     lastProto; // protokół ostatniej ramki
+extern MeshCoreInfo  lastMcInfo; // zdekodowany nagłówek MeshCore
 
 // ––– Klasyfikator ramek –––
 ProtoType classify_protocol(const uint8_t* data, uint8_t len);
