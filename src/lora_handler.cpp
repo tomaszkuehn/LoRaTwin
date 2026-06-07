@@ -44,6 +44,7 @@ float                      lastSnr        = 0.0f;
 float                      lastFreqError  = 0.0f;
 volatile float             currentRssi    = -200.0f;  // volatile dla współdzielenia ISR/loop
 LoraPacket                 lastPacket;
+ProtoType                  lastProto     = PROTO_UNKNOWN;   // protokół ostatniej ramki
 
 // ––– Non-blocking LED blink state –––
 static uint32_t ledBlinkUntil = 0;
@@ -80,13 +81,15 @@ volatile int logHead  = -1;
 int          logCount = 0;
 
 static void log_add(char type, uint8_t len, float rssi, float snr,
-                    const uint8_t* raw = nullptr, uint8_t rawLen = 0) {
+                    const uint8_t* raw = nullptr, uint8_t rawLen = 0,
+                    ProtoType proto = PROTO_UNKNOWN) {
     int idx = (logHead + 1) % LOG_CAPACITY;
     logBuffer[idx].timestamp = millis();
     logBuffer[idx].type      = type;
     logBuffer[idx].len       = len;
     logBuffer[idx].rssi      = rssi;
     logBuffer[idx].snr       = snr;
+    logBuffer[idx].proto     = proto;
     if (raw && rawLen > 0) {
         logBuffer[idx].dataLen = min(rawLen, (uint8_t)LOG_DATA_MAX);
         memcpy(logBuffer[idx].data, raw, logBuffer[idx].dataLen);
@@ -95,6 +98,100 @@ static void log_add(char type, uint8_t len, float rssi, float snr,
     }
     logHead = idx;
     if (logCount < LOG_CAPACITY) logCount++;
+}
+
+// ––– Identyfikacja protokołu –––
+const char* proto_to_str(ProtoType p) {
+    switch (p) {
+        case PROTO_MESHCORE:   return "MeshCore";
+        case PROTO_MESHTASTIC: return "Meshtastic";
+        case PROTO_OTHER:      return "Other";
+        default:               return "?";
+    }
+}
+
+// ––– Klasyfikator ramek –––
+// Analizuje surowe bajty ramki i określa protokół.
+//
+// Ponieważ SX1262 filtruje sprzętowo po sync word, odebrane ramki
+// pochodzą z protokołu zgodnego z aktualnym profilem:
+//   MeshCore (sync 0x12): własny format z Data/varintami
+//   Meshtastic (sync 0x2B): MeshPacket z fixed32
+//
+// Klasyfikacja jest dwupoziomowa:
+//   1. Sygnatura bajtowa (pewna) — rozpoznane tagi protobuf
+//   2. Fallback do aktywnego profilu (gdy sygnatura niejasna)
+//
+ProtoType classify_protocol(const uint8_t* data, uint8_t len) {
+    if (!data || len < 2) return PROTO_UNKNOWN;
+
+    // Aktywny profil jako fallback
+    ProtoType profileDefault = (g_settings.profile == PROFILE_MESHCORE)
+                               ? PROTO_MESHCORE : PROTO_MESHTASTIC;
+
+    // Pomiń pierwszy bajt (nagłówek aplikacyjny — hop_start/hop_limit/want_ack)
+    const uint8_t* p = data + 1;
+    const uint8_t* end = data + len;
+
+    if (p >= end) return profileDefault;
+
+    uint8_t firstTag = *p;
+    uint8_t firstField = firstTag >> 3;
+    uint8_t firstWire  = firstTag & 0x07;
+
+    // --- Rozpoznane sygnatury ---
+
+    // Meshtastic MeshPacket: field 1 (from) fixed32 → tag 0x0D
+    if (firstTag == 0x0D && len >= 7) {
+        return PROTO_MESHTASTIC;
+    }
+
+    // Data message (MeshCore lub Meshtastic decoded): field 1 (portnum) varint → tag 0x08
+    if (firstTag == 0x08) {
+        p++;
+        while (p < end && (*p & 0x80)) p++;
+        if (p < end) p++;
+
+        while (p < end) {
+            uint8_t tag = *p;
+            uint8_t fn  = tag >> 3;
+            uint8_t wt  = tag & 0x07;
+            p++;
+
+            if (wt == 0) {
+                while (p < end && (*p & 0x80)) p++;
+                if (p < end) p++;
+            } else if (wt == 2) {
+                if (p >= end) break;
+                uint32_t vlen = 0;
+                int shift = 0;
+                while (p < end && (*p & 0x80)) { vlen |= (uint32_t)(*p & 0x7F) << shift; shift += 7; p++; }
+                if (p >= end) break;
+                vlen |= (uint32_t)(*p & 0x7F) << shift;
+                p++;
+                if (p + vlen > end) break;
+                p += vlen;
+            } else if (wt == 5) {
+                if (p + 4 > end) break;
+                p += 4;
+            } else {
+                break;
+            }
+
+            if (fn == 4 || fn == 5 || fn == 6) {
+                if (wt == 5) return PROTO_MESHTASTIC;   // fixed32 → Meshtastic Data
+                if (wt == 0) return PROTO_MESHCORE;      // varint → MeshCore
+            }
+        }
+
+        // Sam tag 0x08 + poprawny protobuf → domyślnie MeshCore
+        return PROTO_MESHCORE;
+    }
+
+    // --- Fallback: użyj aktywnego profilu ---
+    // Ramka ma nieznaną strukturę bajtową, ale radio odebrało ją
+    // z sync word zgodnym z profilem → klasyfikuj zgodnie z profilem.
+    return profileDefault;
 }
 
 // ––– Sprzęt LoRa –––
@@ -316,17 +413,19 @@ void lora_process() {
         activityState   = ACT_RECEIVING;
         activityUntil   = now + ACTIVITY_HOLD_MS;
         activityHistory = true;
-        log_add('R', pkt.len, pkt.rssi, pkt.snr, pkt.data, pkt.len);
 
-        Serial.printf("[LoRa] RX #%u | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
-                      packetCount, pkt.rssi, pkt.snr, pkt.len);
+        ProtoType proto = classify_protocol(pkt.data, pkt.len);
+        lastProto = proto;
+        log_add('R', pkt.len, pkt.rssi, pkt.snr, pkt.data, pkt.len, proto);
 
-        // Hex dump w monitorze szeregowym (tylko pierwsze 32 bajty)
+        Serial.printf("[LoRa] RX #%u | %s | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
+                      packetCount, proto_to_str(proto), pkt.rssi, pkt.snr, pkt.len);
+
+        // Hex dump w monitorze szeregowym (pełna ramka)
         Serial.print(F("       "));
-        for (uint8_t i = 0; i < min(pkt.len, (uint8_t)32); i++) {
+        for (uint8_t i = 0; i < pkt.len; i++) {
             Serial.printf("%02X ", pkt.data[i]);
         }
-        if (pkt.len > 32) Serial.print(F("..."));
         Serial.println();
     }
     else if (state == RADIOLIB_ERR_CRC_MISMATCH) {
@@ -453,8 +552,10 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
 
     uint8_t totalLen = p - buf;
 
-    Serial.printf("[LoRa] TX #%u | %u B (MeshCore proto) | %d dBm | timeout ~%lu ms\n",
-                  txPacketId - 1, totalLen, g_settings.txPower,
+    ProtoType txProto = (g_settings.profile == PROFILE_MESHCORE) ? PROTO_MESHCORE : PROTO_MESHTASTIC;
+
+    Serial.printf("[LoRa] TX #%u | %s | %u B | %d dBm | timeout ~%lu ms\n",
+                  txPacketId - 1, proto_to_str(txProto), totalLen, g_settings.txPower,
                   5 + (radio.getTimeOnAir(totalLen) * 5) / 1000);
 
     int state = radio.transmit(buf, totalLen);
@@ -471,7 +572,7 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
         return false;
     }
 
-    log_add('T', totalLen, g_settings.txPower, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen));
+    log_add('T', totalLen, g_settings.txPower, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen), txProto);
 
     // Wróć do nasłuchu
     radio.setDio1Action(onLoraPacket);

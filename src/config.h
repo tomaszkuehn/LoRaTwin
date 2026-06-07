@@ -3,7 +3,7 @@
 
 // ––– WiFi — domyślne dane (fallback, nadpisywane przez NVS / web UI) –––
 #define WIFI_SSID "LoRaTwin"
-#define WIFI_PASS "1234"
+#define WIFI_PASS "12345678"
 
 // ––– LoRa – stałe sprzętowe –––
 #define LORA_SYNC_MESHTASTIC    0x2B

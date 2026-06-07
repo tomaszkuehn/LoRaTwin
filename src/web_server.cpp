@@ -197,6 +197,7 @@ static void handleApiLog(AsyncWebServerRequest* request) {
             ev["len"]  = logBuffer[idx].len;
             ev["rssi"] = logBuffer[idx].rssi;
             ev["snr"]  = logBuffer[idx].snr;
+            ev["proto"] = proto_to_str(logBuffer[idx].proto);
             // Hex dump pierwszych bajtów
             if (logBuffer[idx].dataLen > 0) {
                 char hex[LOG_DATA_MAX * 3 + 1];

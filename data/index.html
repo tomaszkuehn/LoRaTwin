@@ -202,7 +202,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 <div class="config-panel" style="max-height:300px; overflow-y:auto; padding:.5em 1em;">
   <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="logTable">
     <thead><tr style="color:var(--text2); text-align:left;">
-      <th style="padding:2px 6px;">Czas</th><th>Typ</th><th>Dane</th><th>RSSI/SNR</th>
+      <th style="padding:2px 6px;">Czas</th><th>Typ</th><th>Proto</th><th>Dane</th><th>RSSI/SNR</th>
     </tr></thead>
     <tbody id="logBody"></tbody>
   </table>
@@ -244,10 +244,13 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 <script>
 // --- Status ---
 const $ = id => document.getElementById(id);
+let deviceBootMs = 0;  // szacowany moment bootu device (Date.now() - uptime)
+
 async function refreshStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
+    deviceBootMs = Date.now() - d.uptime_s * 1000;
     $('ipAddr').textContent = d.ip;
     $('wifiRssi').textContent = 'RSSI: '+d.wifi_rssi+' dBm';
     $('uptime').textContent = fmtUptime(d.uptime_s);
@@ -268,6 +271,13 @@ function fmtUptime(s) {
   if(s<60) return s+'s';
   if(s<3600) return Math.floor(s/60)+'m '+s%60+'s';
   return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';
+}
+
+function fmtTime(deviceMs) {
+  // Przelicza timestamp urządzenia (millis od bootu) na HH:MM:SS
+  if (!deviceBootMs) return (deviceMs/1000).toFixed(1)+'s';
+  const d = new Date(deviceBootMs + deviceMs);
+  return d.toLocaleTimeString();
 }
 
 // --- Config ---
@@ -376,7 +386,31 @@ function hideMsg() { $('msgBox').className='msg'; $('msgBox').style.display='non
 
 // --- Log ---
 const TYPE_LABEL = { 'R':'📥 RX', 'C':'❌ CRC', 'E':'⚡ NRG', 'T':'📤 TX' };
+const PROTO_COLOR = { 'MeshCore':'#00d4ff', 'Meshtastic':'#ffab40', 'Other':'#ff5252', '?':'#8888a0' };
+let logFreeze = false;  // true gdy rozwinięto hex — wstrzymaj odświeżanie
+
+function renderHex(e) {
+  // Pokazuje pierwsze 8 bajtów, resztę chowa za klikalną ikonką na KOŃCU
+  if (!e.hex) return '';
+  const bytes = e.hex.trim().split(/\s+/);
+  if (bytes.length === 0) return '';
+  const head = bytes.slice(0, 8).join(' ');
+  const tail = bytes.slice(8).join(' ');
+  if (!tail) {
+    return '<br><span style="font-size:.65rem; color:var(--yellow)">'+head+'</span>';
+  }
+  const uid = 'hx'+e.t;
+  return '<br><span style="font-size:.65rem; color:var(--yellow)">'+head+
+    '<span id="'+uid+'" style="display:none"> '+tail+'</span>'+
+    ' <span style="cursor:pointer;font-size:.8rem" onclick="'+
+    "var el=document.getElementById('"+uid+"');"+
+    "if(el.style.display==='none'){el.style.display='inline';this.textContent='\\u25B4';logFreeze=true}"+
+    "else{el.style.display='none';this.textContent='\\u25BE';logFreeze=false}"+
+    '" title="pokaż/ukryj resztę">▾</span></span>';
+}
+
 async function refreshLog() {
+  if (logFreeze) return;  // zamrożone — użytkownik czyta hex
   try {
     const r = await fetch('/api/log'); const d = await r.json();
     const events = d.events || [];
@@ -388,10 +422,14 @@ async function refreshLog() {
       const label = TYPE_LABEL[e.type] || '?'+e.type;
       const detail = e.type==='R' ? e.len+' B' : e.type==='T' ? e.len+' B TX' : e.type==='E' ? 'RSSI>próg' : 'CRC fail';
       const rssi = e.type==='T' ? e.rssi.toFixed(0)+' dBm' : e.rssi.toFixed(0)+' / '+e.snr.toFixed(1)+' dB';
-      const hex = e.hex ? '<br><span style="font-size:.65rem; color:var(--yellow)">'+e.hex+'</span>' : '';
+      const hexHtml = renderHex(e);
+      const protoName = e.proto || '?';
+      const protoBadge = (e.type === 'R' || e.type === 'T')
+        ? '<span style="color:'+(PROTO_COLOR[protoName]||'#888')+'">'+protoName+'</span>'
+        : '<span style="color:#555">--</span>';
       html += '<tr style="border-top:1px solid #2a2a4a;">'+
-        '<td style="padding:2px 6px; color:var(--text2)">'+(e.t/1000).toFixed(1)+'s</td>'+
-        '<td>'+label+'</td><td>'+detail+hex+'</td><td style="color:var(--text2)">'+rssi+'</td></tr>';
+        '<td style="padding:2px 6px; color:var(--text2)">'+fmtTime(e.t)+'</td>'+
+        '<td>'+label+'</td><td>'+protoBadge+'</td><td>'+detail+hexHtml+'</td><td style="color:var(--text2)">'+rssi+'</td></tr>';
     }
     $('logBody').innerHTML = html;
   } catch(e) {}

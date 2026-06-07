@@ -140,10 +140,17 @@ void display_render() {
     u8g2.setCursor(0, 34);
     u8g2.printf("RSSI:%.0f dBm  SNR:%.1f dB", currentRssi, lastSnr);
 
-    // ––– LINIA 4: RX counter (y=43) –––
+    // ––– LINIA 4: RX counter + protokół (y=43) –––
     u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setCursor(0, 46);
-    u8g2.printf("RX: %u", packetCount);
+    const char* protoLabel = "?";
+    switch (lastProto) {
+        case PROTO_MESHCORE:   protoLabel = "MC"; break;
+        case PROTO_MESHTASTIC: protoLabel = "MT"; break;
+        case PROTO_OTHER:      protoLabel = "??"; break;
+        default:               break;
+    }
+    u8g2.printf("RX: %u %s", packetCount, protoLabel);
     u8g2.setFont(u8g2_font_5x7_tf);
 
     // ––– Stopka — IP / status (y=63) –––

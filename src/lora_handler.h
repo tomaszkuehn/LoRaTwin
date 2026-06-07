@@ -88,9 +88,19 @@ void          lora_led_blink_start(uint32_t duration_ms = 30);
 void          lora_led_blink_update();
 bool          lora_led_blink_active();
 
+// ––– Identyfikacja protokołu –––
+enum ProtoType : uint8_t {
+    PROTO_UNKNOWN   = 0,   // nie udało się sklasyfikować
+    PROTO_MESHCORE  = 1,   // MeshCore — Data z varintami
+    PROTO_MESHTASTIC = 2,  // Meshtastic — MeshPacket z fixed32
+    PROTO_OTHER     = 3    // inny protokół (RAW, własny, itp.)
+};
+
+const char* proto_to_str(ProtoType p);
+
 // ––– Log zdarzeń –––
 #define LOG_CAPACITY 64
-#define LOG_DATA_MAX 12       // pierwszych N bajtów do podglądu
+#define LOG_DATA_MAX 255      // max bajtów do podglądu w logu
 struct LogEntry {
     uint32_t timestamp;       // millis() w momencie zdarzenia
     char     type;            // 'R'=RX OK, 'C'=CRC fail, 'E'=Energy, 'T'=TX
@@ -99,8 +109,13 @@ struct LogEntry {
     float    snr;
     uint8_t  dataLen;         // ile bajtów w data[]
     uint8_t  data[LOG_DATA_MAX];
+    ProtoType proto;          // typ protokołu (tylko dla 'R' i 'T')
 };
 
 extern LogEntry      logBuffer[LOG_CAPACITY];
 extern volatile int  logHead;   // index najnowszego wpisu
 extern int           logCount;  // liczba wpisów (max LOG_CAPACITY)
+extern ProtoType     lastProto; // protokół ostatniej ramki
+
+// ––– Klasyfikator ramek –––
+ProtoType classify_protocol(const uint8_t* data, uint8_t len);

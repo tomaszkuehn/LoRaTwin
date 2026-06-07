@@ -5,7 +5,7 @@
 
 // ––– Domyślna konfiguracja –––
 #define AP_SSID            "LoRaTwin"
-#define AP_PASS            "1234"
+#define AP_PASS            "12345678"
 #define AP_IP              IPAddress(192, 168, 4, 1)
 #define AP_GATEWAY         IPAddress(192, 168, 4, 1)
 #define AP_SUBNET          IPAddress(255, 255, 255, 0)
@@ -56,10 +56,12 @@ void wifi_init() {
         // ––– Tryb Access Point –––
         Serial.printf("[WiFi] Tryb AP: %s\n", AP_SSID);
 
-        WiFi.mode(WIFI_MODE_AP);
-        // Wyłącz oszczędzanie energii w AP
-        WiFi.setSleep(false);
+        // softAPConfig() musi być PRZED softAP()
+        if (!WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET)) {
+            Serial.println(F("[WiFi] OSTRZEŻENIE: nie udało się ustawić IP AP (używam domyślnego)."));
+        }
 
+        // WPA2 wymaga minimum 8 znaków hasła
         if (!WiFi.softAP(AP_SSID, AP_PASS)) {
             Serial.println(F("[WiFi] BŁĄD: nie udało się utworzyć AP!"));
             wifiActive = false;
@@ -67,11 +69,7 @@ void wifi_init() {
         }
 
         delay(200);
-
-        // Konfiguracja statycznego IP dla AP
-        if (!WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET)) {
-            Serial.println(F("[WiFi] OSTRZEŻENIE: nie udało się ustawić IP AP (używam domyślnego)."));
-        }
+        WiFi.setSleep(false);
 
         wifiActive = true;
         Serial.printf("[WiFi] AP gotowy: %s | IP: %s\n",
