@@ -76,6 +76,39 @@ header .ver { color:var(--text2); font-size:.85rem; }
 footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
          border-top:1px solid #2a2a4a; margin-top:1.5em; }
 
+/* -- Hamburger menu -- */
+.hamburger { cursor:pointer; background:none; border:none; padding:.4em; display:flex;
+             flex-direction:column; gap:5px; z-index:1001; }
+.hamburger span { display:block; width:24px; height:2px; background:var(--accent);
+                  border-radius:2px; transition:all .25s; }
+.hamburger.open span:nth-child(1) { transform:rotate(45deg) translate(5px,5px); }
+.hamburger.open span:nth-child(2) { opacity:0; }
+.hamburger.open span:nth-child(3) { transform:rotate(-45deg) translate(5px,-5px); }
+
+.overlay { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:998;
+           opacity:0; pointer-events:none; transition:opacity .25s; }
+.overlay.open { opacity:1; pointer-events:auto; }
+
+.sidebar { position:fixed; top:0; right:-300px; width:280px; height:100%; z-index:999;
+           background:var(--card); border-left:1px solid #2a2a4a; padding:1.2em;
+           transition:right .25s; overflow-y:auto; }
+.sidebar.open { right:0; }
+.sidebar h3 { color:var(--accent); font-size:.95rem; margin-bottom:1em; }
+.sidebar .menu-item { display:flex; align-items:center; gap:.7em; padding:.7em 0;
+                      border-bottom:1px solid #2a2a4a; cursor:pointer; user-select:none; }
+.sidebar .menu-item:last-child { border-bottom:none; }
+.sidebar .menu-item .toggle { width:40px; height:22px; background:#3a3a6a; border-radius:11px;
+                              position:relative; transition:background .2s; flex-shrink:0; }
+.sidebar .menu-item .toggle.on { background:var(--accent); }
+.sidebar .menu-item .toggle::after { content:''; position:absolute; top:3px; left:3px;
+    width:16px; height:16px; background:#fff; border-radius:50%; transition:left .2s; }
+.sidebar .menu-item .toggle.on::after { left:21px; }
+.sidebar .menu-item .label { font-size:.85rem; color:var(--text); }
+
+.collapsible { overflow:hidden; transition:max-height .35s ease, opacity .25s, margin .35s; }
+.collapsible.hidden { max-height:0 !important; opacity:0; margin-top:0; margin-bottom:0;
+                      padding-top:0; padding-bottom:0; border:none; }
+
 @media (max-width:550px) {
   .container { padding:.5em; }
   .config-panel .row { flex-direction:column; }
@@ -94,10 +127,16 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <span class="ver" id="fwVer">v-</span>
     </div>
   </div>
-  <div><a href="/update" class="btn" target="_blank">ElegantOTA →</a></div>
+  <div style="display:flex; align-items:center; gap:.8em;">
+    <a href="/update" class="btn" target="_blank">ElegantOTA →</a>
+    <button class="hamburger" id="hamburger" onclick="toggleMenu()" title="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
 </header>
 
 <!-- Konfiguracja WiFi -->
+<div id="sect-wifi" class="collapsible" style="max-height:500px;">
 <h2>📶 Konfiguracja WiFi</h2>
 <div class="config-panel">
   <div class="row">
@@ -123,8 +162,10 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
     <span style="font-size:.75rem; color:var(--yellow); margin-left:1em; align-self:center;" id="wifiWarn"></span>
   </div>
 </div>
+</div>
 
 <!-- Kafelki info -->
+<div id="sect-status" class="collapsible" style="max-height:400px;">
 <div class="grid">
   <div class="card">
     <div class="label">WiFi / IP</div>
@@ -156,8 +197,10 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
     <span>Sync: 0x2B</span>
   </div>
 </div>
+</div>
 
 <!-- Konfiguracja radia -->
+<div id="sect-radio" class="collapsible" style="max-height:500px;">
 <h2>⚙ Konfiguracja Radia</h2>
 <div class="config-panel">
   <div class="row">
@@ -206,6 +249,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
     <button class="btn danger" onclick="resetConfig()">Reset do domyślnych</button>
   </div>
 </div>
+</div>
 
 <!-- Log uproszczony (domyślnie widoczny) -->
 <h2>📋 Log zdarzeń</h2>
@@ -253,6 +297,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Upload firmware -->
+<div id="sect-firmware" class="collapsible" style="max-height:400px;">
 <h2>📦 Firmware Update</h2>
 <div class="upload-zone" id="dropZone">
   <div class="icon">📦</div>
@@ -263,11 +308,33 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
   <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
   <div class="progress-text" id="progressText">Uploading...</div>
 </div>
+</div>
 <div class="msg" id="msgBox"></div>
 
 <footer>Heltec WiFi LoRa 32 V3 &bull; ESP32-S3 &bull; LoRaTwin v<span id="fwFooter">-</span></footer>
 
 </div>
+<!-- Overlay + Sidebar menu -->
+<div class="overlay" id="overlay" onclick="toggleMenu()"></div>
+<nav class="sidebar" id="sidebar">
+  <h3>⚙ Panel sections</h3>
+  <div class="menu-item" onclick="toggleSection('sect-wifi')">
+    <div class="toggle on" id="tog-wifi"></div>
+    <span class="label">📶 WiFi Config</span>
+  </div>
+  <div class="menu-item" onclick="toggleSection('sect-status')">
+    <div class="toggle on" id="tog-status"></div>
+    <span class="label">📊 Status Cards</span>
+  </div>
+  <div class="menu-item" onclick="toggleSection('sect-radio')">
+    <div class="toggle on" id="tog-radio"></div>
+    <span class="label">⚙ Radio Config</span>
+  </div>
+  <div class="menu-item" onclick="toggleSection('sect-firmware')">
+    <div class="toggle on" id="tog-firmware"></div>
+    <span class="label">📦 Firmware Update</span>
+  </div>
+</nav>
 
 <script>
 // --- Status ---
@@ -587,7 +654,46 @@ async function saveWifiConfig() {
   } catch(e) { showMsg('err', 'Błąd sieci — jeśli zmieniłeś tryb na AP, połącz się z nową siecią.'); }
 }
 
+// --- Menu ---
+function toggleMenu() {
+  const open = $('sidebar').classList.toggle('open');
+  $('overlay').classList.toggle('open');
+  $('hamburger').classList.toggle('open');
+}
+
+function toggleSection(id) {
+  const el = document.getElementById(id);
+  const tog = document.getElementById('tog-' + id.replace('sect-', ''));
+  const hidden = el.classList.toggle('hidden');
+  if (tog) tog.classList.toggle('on', !hidden);
+  saveMenuState();
+}
+
+function saveMenuState() {
+  const state = {};
+  ['wifi','status','radio','firmware'].forEach(k => {
+    const el = document.getElementById('sect-'+k);
+    if (el) state[k] = el.classList.contains('hidden') ? 0 : 1;
+  });
+  try { localStorage.setItem('lora-menu', JSON.stringify(state)); } catch(e) {}
+}
+
+function loadMenuState() {
+  let state;
+  try { state = JSON.parse(localStorage.getItem('lora-menu')); } catch(e) {}
+  if (!state) state = {wifi:1, status:1, radio:1, firmware:1};
+  Object.keys(state).forEach(k => {
+    const el = document.getElementById('sect-'+k);
+    const tog = document.getElementById('tog-'+k);
+    if (!state[k]) {
+      if (el) el.classList.add('hidden');
+      if (tog) tog.classList.remove('on');
+    }
+  });
+}
+
 // --- Start ---
+loadMenuState();
 loadConfig();
 loadWifiConfig();
 refreshStatus();
