@@ -9,7 +9,7 @@
 #define LORA_SYNC_MESHTASTIC    0x2B
 #define LORA_SYNC_MESHCORE      0x12
 #define LORA_PREAMBLE_LEN       16
-#define LORA_TX_POWER           10       // dBm – moc nadawania (fallback)
+#define LORA_TX_POWER           15       // dBm – moc nadawania (fallback, zgodne z DEFAULT_TX_POWER)
 
 // ––– SX1262 TCXO (Heltec V3 — 1.6V, DC-DC) –––
 #define LORA_TCXO_VOLTAGE       1.6f     // V – napięcie TCXO

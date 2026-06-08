@@ -442,6 +442,7 @@ bool lora_reinit() {
     if (radioInited) {
         radio.standby();
         radio.clearDio1Action();
+        loraSpi.end();                 // zwolnij SPI przed ponowną inicjalizacją
     }
 
     // Inicjalizacja SPI (SS=-1 → ręczne zarządzanie NSS przez RadioLib)
@@ -835,7 +836,7 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
         return false;
     }
 
-    log_add('T', totalLen, g_settings.txPower, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen), txProto,
+    log_add('T', totalLen, 0.0f, 0, buf, min((uint8_t)LOG_DATA_MAX, totalLen), txProto,
             mcTx.routeType, mcTx.payloadType, mcTx.payloadVersion,
             mcTx.hopCount, mcTx.hashSize, mcTx.hasTransport,
             mcTx.transport1, mcTx.transport2);
