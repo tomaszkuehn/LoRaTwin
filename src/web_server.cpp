@@ -254,6 +254,39 @@ static void handleApiLog(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+// ––– GET /api/log/simple — uproszczony log (TX/RX, route, payload, hops, text) –––
+static void handleApiLogSimple(AsyncWebServerRequest* request) {
+    JsonDocument doc;
+    JsonArray arr = doc["events"].to<JsonArray>();
+
+    if (simpleLogCount > 0) {
+        int start = (simpleLogCount < SIMPLE_LOG_CAPACITY) ? 0
+                   : (simpleLogHead + 1) % SIMPLE_LOG_CAPACITY;
+        for (int i = 0; i < simpleLogCount; i++) {
+            int idx = (start + i) % SIMPLE_LOG_CAPACITY;
+            JsonObject ev = arr.add<JsonObject>();
+            ev["t"]       = simpleLogBuffer[idx].timestamp;
+            ev["type"]    = String(simpleLogBuffer[idx].type);
+            ev["rssi"]    = simpleLogBuffer[idx].rssi;
+            ev["snr"]     = simpleLogBuffer[idx].snr;
+            // Always include MeshCore fields — use "?" for unknown (0xFF)
+            ev["route"]   = (simpleLogBuffer[idx].routeType != 0xFF)
+                          ? mc_route_type_name(simpleLogBuffer[idx].routeType) : "?";
+            ev["routeId"] = simpleLogBuffer[idx].routeType;
+            ev["payload"] = (simpleLogBuffer[idx].payloadType != 0xFF)
+                          ? mc_payload_type_name(simpleLogBuffer[idx].payloadType) : "?";
+            ev["payloadId"] = simpleLogBuffer[idx].payloadType;
+            ev["hops"]    = simpleLogBuffer[idx].hopCount;
+            ev["text"]    = simpleLogBuffer[idx].text[0]
+                          ? simpleLogBuffer[idx].text : "";
+        }
+    }
+
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+}
+
 // ––– POST /api/tx — wyślij ramkę LoRa –––
 static void handleApiTx(AsyncWebServerRequest* request) {
     if (!request->hasParam("data", true)) {
@@ -358,6 +391,7 @@ void web_server_init() {
     server.on("/api/wifi",    HTTP_GET,  handleApiWifiGet);
     server.on("/api/wifi",    HTTP_POST, handleApiWifiPost);
     server.on("/api/tx",      HTTP_POST, handleApiTx);
+    server.on("/api/simplelog", HTTP_GET,  handleApiLogSimple);
     server.on("/api/log",     HTTP_GET,  handleApiLog);
     server.onNotFound(handleNotFound);
 

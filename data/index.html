@@ -207,17 +207,35 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
   </div>
 </div>
 
-<!-- Log zdarzeń -->
+<!-- Log uproszczony (domyślnie widoczny) -->
 <h2>📋 Log zdarzeń</h2>
-<div class="config-panel" style="max-height:300px; overflow-y:auto; padding:.5em 1em;">
-  <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="logTable">
+<div class="config-panel" style="max-height:280px; overflow-y:auto; padding:.5em 1em;">
+  <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="simpleLogTable">
     <thead><tr style="color:var(--text2); text-align:left;">
-      <th style="padding:2px 6px;">Czas</th><th>Typ</th><th>Proto</th><th>Dane</th><th>RSSI/SNR</th>
+      <th style="padding:2px 4px;">Czas</th><th style="padding:2px 4px;">Typ</th>
+      <th style="padding:2px 4px;">Route</th><th style="padding:2px 4px;">Payload</th>
+      <th style="padding:2px 4px;">Hops</th><th style="padding:2px 4px; width:100%">Treść</th>
     </tr></thead>
-    <tbody id="logBody"></tbody>
+    <tbody id="simpleLogBody"></tbody>
   </table>
-  <div class="live-info" id="logEmpty" style="margin-top:.5em;">Brak zdarzeń.</div>
+  <div class="live-info" id="simpleLogEmpty" style="margin-top:.5em;">Brak zdarzeń.</div>
 </div>
+
+<!-- Log pełny (zwijany) -->
+<details style="margin-top:1em; margin-bottom:1.2em;">
+  <summary style="cursor:pointer; color:var(--accent); font-size:.9rem; font-weight:600; padding:.3em 0;">
+    📋 Pełny log (hex dump, CRC, Energy)
+  </summary>
+  <div class="config-panel" style="max-height:300px; overflow-y:auto; padding:.5em 1em; margin-top:.6em;">
+    <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="logTable">
+      <thead><tr style="color:var(--text2); text-align:left;">
+        <th style="padding:2px 6px;">Czas</th><th>Typ</th><th>Proto</th><th>Dane</th><th>RSSI/SNR</th>
+      </tr></thead>
+      <tbody id="logBody"></tbody>
+    </table>
+    <div class="live-info" id="logEmpty" style="margin-top:.5em;">Brak zdarzeń.</div>
+  </div>
+</details>
 
 <!-- Nadawanie -->
 <h2>📡 Nadaj ramkę</h2>
@@ -397,7 +415,42 @@ function uploadFirmware(file) {
 function showMsg(t,txt) { const m=$('msgBox'); m.className='msg '+t; m.textContent=txt; m.style.display='block'; }
 function hideMsg() { $('msgBox').className='msg'; $('msgBox').style.display='none'; }
 
-// --- Log ---
+// --- Log uproszczony (domyślnie widoczny) ---
+const SIMPLE_TYPE_LABEL = { 'R':'📥 RX', 'T':'📤 TX' };
+
+async function refreshSimpleLog() {
+  try {
+    const r = await fetch('/api/simplelog'); const d = await r.json();
+    const events = d.events || [];
+    if (!events.length) { $('simpleLogEmpty').style.display='block'; $('simpleLogBody').innerHTML=''; return; }
+    $('simpleLogEmpty').style.display='none';
+    let html = '';
+    for (let i = events.length-1; i >= Math.max(0, events.length-40); i--) {
+      const e = events[i];
+      const label = SIMPLE_TYPE_LABEL[e.type] || e.type;
+      const route = e.route || '--';
+      const payload = e.payload || '--';
+      const hops = (e.hops !== undefined) ? e.hops : '--';
+      const text = e.text || '';
+      const rssi = e.rssi ? e.rssi.toFixed(0)+'dB' : '';
+      const snr = e.snr ? e.snr.toFixed(1)+'dB' : '';
+      const sigInfo = rssi ? rssi+' / '+snr : '';
+      html += '<tr style="border-top:1px solid #2a2a4a;">'+
+        '<td style="padding:2px 4px; color:var(--text2);white-space:nowrap;vertical-align:top">'+fmtTime(e.t)+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top">'+label+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top;color:#aab">'+route+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top;color:#0f0">'+payload+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top">'+hops+'</td>'+
+        '<td style="padding:2px 4px;vertical-align:top">'+
+          '<span style="color:#e0e0e0">'+escapeHtml(text)+'</span>'+
+          (sigInfo ? ' <span style="color:var(--text2);font-size:.65rem">'+sigInfo+'</span>' : '')+
+        '</td></tr>';
+    }
+    $('simpleLogBody').innerHTML = html;
+  } catch(e) {}
+}
+
+// --- Log pełny (zwijany) ---
 const TYPE_LABEL = { 'R':'📥 RX', 'C':'❌ CRC', 'E':'⚡ NRG', 'T':'📤 TX' };
 const PROTO_COLOR = { 'MeshCore':'#00d4ff', 'Meshtastic':'#ffab40', 'Other':'#ff5252', '?':'#8888a0' };
 let logFreeze = false;  // true gdy rozwinięto hex — wstrzymaj odświeżanie
@@ -430,7 +483,7 @@ async function refreshLog() {
     if (!events.length) { $('logEmpty').style.display='block'; $('logBody').innerHTML=''; return; }
     $('logEmpty').style.display='none';
     let html = '';
-    for (let i = events.length-1; i >= Math.max(0, events.length-20); i--) {
+    for (let i = events.length-1; i >= Math.max(0, events.length-40); i--) {
       const e = events[i];
       const label = TYPE_LABEL[e.type] || '?'+e.type;
       let detail = e.type==='R' ? e.len+' B' : e.type==='T' ? e.len+' B TX' : e.type==='E' ? 'RSSI>próg' : 'CRC fail';
@@ -538,9 +591,11 @@ async function saveWifiConfig() {
 loadConfig();
 loadWifiConfig();
 refreshStatus();
+refreshSimpleLog();
 refreshLog();
 setInterval(refreshStatus, 2000);
-setInterval(refreshLog, 3000);
+setInterval(refreshSimpleLog, 2000);
+setInterval(refreshLog, 5000);
 setInterval(loadWifiConfig, 15000);
 </script>
 </body>

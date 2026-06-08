@@ -153,5 +153,25 @@ extern int           logCount;  // liczba wpisów (max LOG_CAPACITY)
 extern ProtoType     lastProto; // protokół ostatniej ramki
 extern MeshCoreInfo  lastMcInfo; // zdekodowany nagłówek MeshCore
 
+// ––– Uproszczony log (tylko TX/RX, route, payload, hops, text) –––
+#define SIMPLE_LOG_CAPACITY 64
+struct SimpleLogEntry {
+    uint32_t timestamp;       // millis() w momencie zdarzenia
+    char     type;            // 'R'=RX, 'T'=TX
+    uint8_t  routeType;       // 0-3 (MeshCore) lub 0xFF dla non-MeshCore
+    uint8_t  payloadType;     // 0-15 (MeshCore) lub 0xFF
+    uint8_t  hopCount;        // 0-63
+    float    rssi;
+    float    snr;
+    char     text[128];       // zdekodowany payload (pusty string jeśli N/A)
+};
+
+extern SimpleLogEntry simpleLogBuffer[SIMPLE_LOG_CAPACITY];
+extern volatile int   simpleLogHead;
+extern int            simpleLogCount;
+
+void simple_log_add(char type, uint8_t routeType, uint8_t payloadType,
+                    uint8_t hopCount, float rssi, float snr, const char* text);
+
 // ––– Klasyfikator ramek –––
 ProtoType classify_protocol(const uint8_t* data, uint8_t len);

@@ -81,6 +81,34 @@ LogEntry     logBuffer[LOG_CAPACITY];
 volatile int logHead  = -1;
 int          logCount = 0;
 
+// ––– Uproszczony log –––
+SimpleLogEntry simpleLogBuffer[SIMPLE_LOG_CAPACITY];
+volatile int   simpleLogHead  = -1;
+int            simpleLogCount = 0;
+
+void simple_log_add(char type, uint8_t routeType, uint8_t payloadType,
+                    uint8_t hopCount, float rssi, float snr, const char* text) {
+    int idx = (simpleLogHead + 1) % SIMPLE_LOG_CAPACITY;
+    simpleLogBuffer[idx].timestamp   = millis();
+    simpleLogBuffer[idx].type        = type;
+    simpleLogBuffer[idx].routeType   = routeType;
+    simpleLogBuffer[idx].payloadType = payloadType;
+    simpleLogBuffer[idx].hopCount    = hopCount;
+    simpleLogBuffer[idx].rssi        = rssi;
+    simpleLogBuffer[idx].snr         = snr;
+    if (text && text[0]) {
+        strncpy(simpleLogBuffer[idx].text, text, 127);
+        simpleLogBuffer[idx].text[127] = '\0';
+    } else {
+        simpleLogBuffer[idx].text[0] = '\0';
+    }
+    simpleLogHead = idx;
+    if (simpleLogCount < SIMPLE_LOG_CAPACITY) simpleLogCount++;
+    Serial.printf("[SLog] #%d %c rt=%d pt=%d hops=%d rssi=%.0f snr=%.1f txt='%s'\n",
+                  simpleLogCount, type, routeType, payloadType, hopCount,
+                  rssi, snr, simpleLogBuffer[idx].text);
+}
+
 static void log_add(char type, uint8_t len, float rssi, float snr,
                     const uint8_t* raw = nullptr, uint8_t rawLen = 0,
                     ProtoType proto = PROTO_UNKNOWN,
@@ -642,9 +670,14 @@ void lora_process() {
             char payloadBuf[128];
             decode_payload_summary(pkt.data, pkt.len, mc, payloadBuf, sizeof(payloadBuf));
             Serial.printf("       Payload: %s\n", payloadBuf);
+            // Uproszczony log
+            simple_log_add('R', mc.routeType, mc.payloadType, mc.hopCount,
+                          pkt.rssi, pkt.snr, payloadBuf);
         } else {
             Serial.printf("[LoRa] RX #%u | %s | RSSI: %.1f dBm | SNR: %.1f dB | len=%u\n",
                           packetCount, proto_to_str(proto), pkt.rssi, pkt.snr, pkt.len);
+            // Uproszczony log — non-MeshCore (routeType/payloadType = 0xFF)
+            simple_log_add('R', 0xFF, 0xFF, 0, pkt.rssi, pkt.snr, proto_to_str(proto));
         }
 
         // Hex dump w monitorze szeregowym (pełna ramka)
@@ -840,6 +873,21 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
             mcTx.routeType, mcTx.payloadType, mcTx.payloadVersion,
             mcTx.hopCount, mcTx.hashSize, mcTx.hasTransport,
             mcTx.transport1, mcTx.transport2);
+
+    // Uproszczony log TX
+    {
+        char txText[128];
+        if (payloadLen > 0) {
+            uint8_t copyLen = min(payloadLen, (uint8_t)127);
+            memcpy(txText, payload, copyLen);
+            txText[copyLen] = '\0';
+        } else {
+            txText[0] = '\0';
+        }
+        uint8_t txRt = (txProto == PROTO_MESHCORE) ? mcTx.routeType : (uint8_t)0xFF;
+        uint8_t txPt = (txProto == PROTO_MESHCORE) ? mcTx.payloadType : (uint8_t)0xFF;
+        simple_log_add('T', txRt, txPt, mcTx.hopCount, 0.0f, 0.0f, txText);
+    }
 
     // Wróć do nasłuchu
     radio.setDio1Action(onLoraPacket);
