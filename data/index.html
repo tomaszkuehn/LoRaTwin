@@ -189,6 +189,16 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
         <option value="6">VERY LONG / SLOW — SF12, BW62.5</option>
       </select>
     </div>
+    <div class="field">
+      <label>TX Power (dBm)</label>
+      <select id="cfgTxPower">
+        <option value="2">2 dBm</option><option value="5">5 dBm</option>
+        <option value="8">8 dBm</option><option value="10">10 dBm</option>
+        <option value="12">12 dBm</option><option value="14">14 dBm</option>
+        <option value="15" selected>15 dBm</option><option value="17">17 dBm</option>
+        <option value="20">20 dBm</option><option value="22">22 dBm (max)</option>
+      </select>
+    </div>
   </div>
   <div class="live-info" id="liveCfg">Aktualne: MeshCore, 869.618 MHz (SF8, BW62.5, CR4/8)</div>
   <div class="btn-row">
@@ -288,6 +298,7 @@ async function loadConfig() {
     $('cfgProfile').value = d.profile;
     $('cfgFreq').value = d.frequency.toFixed(3);
     $('cfgPreset').value = d.preset;
+    $('cfgTxPower').value = d.tx_power;
     onProfileChange();
     updateLiveCfg(d);
   } catch(e) { console.error(e); }
@@ -314,7 +325,8 @@ async function saveConfig() {
   const profile = $('cfgProfile').value;
   const freq = $('cfgFreq').value;
   const preset = $('cfgPreset').value;
-  const body = 'profile='+profile+'&frequency='+freq+'&preset='+preset;
+  const txPower = $('cfgTxPower').value;
+  const body = 'profile='+profile+'&frequency='+freq+'&preset='+preset+'&tx_power='+txPower;
   try {
     const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body });
     const d = await r.json();

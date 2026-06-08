@@ -732,15 +732,24 @@ static uint32_t txPacketId = 0;
 // Zbuduj ramkę MeshCore
 static uint8_t build_meshcore_frame(uint8_t* buf, const uint8_t* payload, uint8_t payloadLen) {
     // Header: v1, TXT_MSG, Flood
-    uint8_t hdr = (0 << 6)   // version = 0 (v1)
+    uint8_t hdr = (0 << 6)     // version = 0 (v1)
                 | (0x02 << 2)  // payloadType = TXT_MSG
                 | (1);         // routeType = Flood
     buf[0] = hdr;
     buf[1] = 0x00;  // path_length: 0 hops, 1-byte hash
+
+    // TXT_MSG payload header: timestamp(4B LE) + txt_type/attempt(1B)
+    uint32_t ts = millis() / 1000;  // pseudo-unix-timestamp
+    buf[2] = ts & 0xFF;
+    buf[3] = (ts >> 8) & 0xFF;
+    buf[4] = (ts >> 16) & 0xFF;
+    buf[5] = (ts >> 24) & 0xFF;
+    buf[6] = 0x00;  // txt_type=0 (plain text), attempt=0
+
     if (payloadLen > 0) {
-        memcpy(buf + 2, payload, payloadLen);
+        memcpy(buf + 7, payload, payloadLen);
     }
-    return 2 + payloadLen;
+    return 7 + payloadLen;  // 2 (header+path) + 5 (TXT header) + text
 }
 
 // Zbuduj ramkę Meshtastic (stary format protobuf)
@@ -757,7 +766,8 @@ static uint8_t build_meshtastic_frame(uint8_t* buf, const uint8_t* payload, uint
 }
 
 bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
-    if (payloadLen > 184) return false;  // MAX_PACKET_PAYLOAD
+    // MAX_PACKET_PAYLOAD = 184, TXT_MSG header = 5 B → max text = 179
+    if (payloadLen > 179) return false;
 
     // LED — sygnalizacja nadawania
     digitalWrite(PIN_LED, HIGH);
@@ -794,7 +804,7 @@ bool lora_tx(const uint8_t* payload, uint8_t payloadLen) {
         mcTx.hopCount = 0;
         mcTx.hashSize = 1;
         mcTx.hasTransport = false;
-        mcTx.payloadOffset = 2;
+        mcTx.payloadOffset = 7;  // header(1) + path_length(1) + TXT header(5)
         mcTx.pathLen = 0;
     } else {
         totalLen = build_meshtastic_frame(buf, payload, payloadLen);
