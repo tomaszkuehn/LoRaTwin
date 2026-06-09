@@ -623,7 +623,9 @@ void lora_process() {
         currentRssi   = pkt.rssi;
 
         // Wrzuć do kolejki
-        packetQueue.push(pkt);
+        if (!packetQueue.push(pkt)) {
+            Serial.println(F("[LoRa] WARN: packet queue full, frame dropped"));
+        }
 
         // Non-blocking LED blink (30ms)
         ledBlinkUntil = now + 30;

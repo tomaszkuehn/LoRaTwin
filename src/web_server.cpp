@@ -49,7 +49,7 @@ static void handleApiWifiPost(AsyncWebServerRequest* request) {
     bool ok = wifi_save_config((WifiMode)mode, ssid.c_str(),
                                 pass.length() > 0 ? pass.c_str() : nullptr);
 
-    JsonDocument doc;
+    DynamicJsonDocument doc(512);
     doc["success"] = ok;
     doc["mode"] = mode;
     doc["ssid"] = ssid;
@@ -61,7 +61,7 @@ static void handleApiWifiPost(AsyncWebServerRequest* request) {
 
 // ––– GET /api/status — JSON ze stanem urządzenia –––
 static void handleApiStatus(AsyncWebServerRequest* request) {
-    JsonDocument doc;
+    DynamicJsonDocument doc(1024);
 
     doc["chip"]         = "ESP32-S3";
     doc["flash_mb"]     = ESP.getFlashChipSize() / (1024 * 1024);
@@ -90,7 +90,7 @@ static void handleApiStatus(AsyncWebServerRequest* request) {
 
 // ––– GET /api/config — pobierz konfigurację radia –––
 static void handleApiConfigGet(AsyncWebServerRequest* request) {
-    JsonDocument doc;
+    DynamicJsonDocument doc(768);
     doc["profile"]    = (uint8_t)g_settings.profile;
     doc["frequency"]  = g_settings.frequency;
     doc["preset"]     = (uint8_t)g_settings.preset;
@@ -165,7 +165,7 @@ static void handleApiConfigPost(AsyncWebServerRequest* request) {
     // Restart radia z nowymi parametrami
     bool ok = lora_reinit();
 
-    JsonDocument doc;
+    DynamicJsonDocument doc(768);
     doc["success"] = ok;
     doc["profile"] = (uint8_t)g_settings.profile;
     doc["frequency"] = g_settings.frequency;
@@ -180,110 +180,159 @@ static void handleApiConfigPost(AsyncWebServerRequest* request) {
     request->send(ok ? 200 : 500, "application/json", json);
 }
 
-// ––– GET /api/log — pobierz log zdarzeń –––
-static void handleApiLog(AsyncWebServerRequest* request) {
-    JsonDocument doc;
-    JsonArray arr = doc["events"].to<JsonArray>();
+// ––– JSON helper: append escaped string –––
+static void appendJsonStr(String& json, const char* s) {
+    json += '"';
+    while (*s) {
+        char c = *s++;
+        if (c == '"')      json += F("\\\"");
+        else if (c == '\\') json += F("\\\\");
+        else if (c >= 0x20) json += c;   // skip control chars
+    }
+    json += '"';
+}
 
-    // Log jest buforem cyklicznym, head to najnowszy wpis
+// ––– GET /api/log — pobierz log zdarzeń (max 30 ostatnich wpisów) –––
+static void handleApiLog(AsyncWebServerRequest* request) {
+    const int LIMIT = 30;
+    String json;
+    json.reserve(16384);
+
+    json += F("{\"events\":[");
     if (logCount > 0) {
-        int start = (logCount < LOG_CAPACITY) ? 0
-                   : (logHead + 1) % LOG_CAPACITY;
-        for (int i = 0; i < logCount; i++) {
+        int total = logCount;
+        int count = (total < LIMIT) ? total : LIMIT;
+        int skip  = total - count;
+        int start = (total < LOG_CAPACITY) ? skip
+                   : (logHead + 1 + skip) % LOG_CAPACITY;
+        for (int i = 0; i < count; i++) {
             int idx = (start + i) % LOG_CAPACITY;
-            JsonObject ev = arr.add<JsonObject>();
-            ev["t"]   = logBuffer[idx].timestamp;
-            ev["type"] = String(logBuffer[idx].type);
-            ev["len"]  = logBuffer[idx].len;
-            ev["rssi"] = logBuffer[idx].rssi;
-            ev["snr"]  = logBuffer[idx].snr;
-            ev["proto"] = proto_to_str(logBuffer[idx].proto);
-            // Pola MeshCore
+            if (i > 0) json += ',';
+
+            json += F("{\"t\":");
+            json += logBuffer[idx].timestamp;
+            json += F(",\"type\":\"");
+            json += logBuffer[idx].type;
+            json += F("\",\"len\":");
+            json += logBuffer[idx].len;
+            json += F(",\"rssi\":");
+            json += logBuffer[idx].rssi;
+            json += F(",\"snr\":");
+            json += logBuffer[idx].snr;
+            json += F(",\"proto\":\"");
+            json += proto_to_str(logBuffer[idx].proto);
+            json += '"';
+
             if (logBuffer[idx].proto == PROTO_MESHCORE) {
-                ev["mcRoute"]   = mc_route_type_name(logBuffer[idx].mcRouteType);
-                ev["mcRouteId"] = logBuffer[idx].mcRouteType;
-                ev["mcPayload"] = mc_payload_type_name(logBuffer[idx].mcPayloadType);
-                ev["mcPayloadId"] = logBuffer[idx].mcPayloadType;
-                ev["mcVer"]     = logBuffer[idx].mcPayloadVer + 1;
-                ev["mcHops"]    = logBuffer[idx].mcHopCount;
-                ev["mcHashSz"]  = logBuffer[idx].mcHashSize;
-                ev["mcPathLen"] = logBuffer[idx].mcHopCount * logBuffer[idx].mcHashSize;
-                ev["mcTransport"] = logBuffer[idx].mcHasTransport;
+                json += F(",\"mcRoute\":\"");
+                json += mc_route_type_name(logBuffer[idx].mcRouteType);
+                json += F("\",\"mcRouteId\":");
+                json += logBuffer[idx].mcRouteType;
+                json += F(",\"mcPayload\":\"");
+                json += mc_payload_type_name(logBuffer[idx].mcPayloadType);
+                json += F("\",\"mcPayloadId\":");
+                json += logBuffer[idx].mcPayloadType;
+                json += F(",\"mcVer\":");
+                json += logBuffer[idx].mcPayloadVer + 1;
+                json += F(",\"mcHops\":");
+                json += logBuffer[idx].mcHopCount;
+                json += F(",\"mcHashSz\":");
+                json += logBuffer[idx].mcHashSize;
+                json += F(",\"mcPathLen\":");
+                json += logBuffer[idx].mcHopCount * logBuffer[idx].mcHashSize;
+                json += F(",\"mcTransport\":");
+                json += logBuffer[idx].mcHasTransport ? "true" : "false";
                 if (logBuffer[idx].mcHasTransport) {
-                    ev["mcTC1"] = logBuffer[idx].mcTransport1;
-                    ev["mcTC2"] = logBuffer[idx].mcTransport2;
+                    json += F(",\"mcTC1\":");
+                    json += logBuffer[idx].mcTransport1;
+                    json += F(",\"mcTC2\":");
+                    json += logBuffer[idx].mcTransport2;
                 }
-                // Dekoduj payload
                 if (logBuffer[idx].dataLen > 0 && logBuffer[idx].mcPayloadType <= 0x0F) {
                     MeshCoreInfo tmpInfo;
                     tmpInfo.payloadType = logBuffer[idx].mcPayloadType;
-                    tmpInfo.payloadOffset = 0;
-                    // Odtwórz payloadOffset z hopCount i hashSize
                     tmpInfo.routeType = logBuffer[idx].mcRouteType;
                     tmpInfo.payloadVersion = logBuffer[idx].mcPayloadVer;
                     tmpInfo.hopCount = logBuffer[idx].mcHopCount;
                     tmpInfo.hashSize = logBuffer[idx].mcHashSize;
                     tmpInfo.hasTransport = logBuffer[idx].mcHasTransport;
                     tmpInfo.pathLen = logBuffer[idx].mcHopCount * logBuffer[idx].mcHashSize;
-                    // Oblicz payloadOffset
-                    uint8_t off = 1;  // header
+                    uint8_t off = 1;
                     if (tmpInfo.hasTransport) off += 4;
-                    off += 1;  // path_length
+                    off += 1;
                     off += tmpInfo.pathLen;
                     tmpInfo.payloadOffset = off;
                     char payloadBuf[128];
                     decode_payload_summary(logBuffer[idx].data, logBuffer[idx].dataLen,
                                            tmpInfo, payloadBuf, sizeof(payloadBuf));
-                    ev["mcPayloadTxt"] = payloadBuf;
+                    json += F(",\"mcPayloadTxt\":");
+                    appendJsonStr(json, payloadBuf);
                 }
             }
-            // Hex dump pierwszych bajtów
             if (logBuffer[idx].dataLen > 0) {
-                char hex[LOG_DATA_MAX * 3 + 1];
+                static char hex[LOG_DATA_MAX * 3 + 1];
                 int pos = 0;
                 for (uint8_t b = 0; b < logBuffer[idx].dataLen; b++) {
                     pos += sprintf(hex + pos, "%02X ", logBuffer[idx].data[b]);
                 }
-                ev["hex"] = hex;
+                hex[pos > 0 ? pos - 1 : 0] = '\0';  // remove trailing space
+                json += F(",\"hex\":");
+                appendJsonStr(json, hex);
             }
+            json += '}';
         }
     }
-
-    String json;
-    serializeJson(doc, json);
+    json += F("]}");
     request->send(200, "application/json", json);
 }
 
-// ––– GET /api/log/simple — uproszczony log (TX/RX, route, payload, hops, text) –––
+// ––– GET /api/log/simple — uproszczony log (max 50 ostatnich wpisów) –––
 static void handleApiLogSimple(AsyncWebServerRequest* request) {
-    JsonDocument doc;
-    JsonArray arr = doc["events"].to<JsonArray>();
+    const int LIMIT = 50;
+    String json;
+    json.reserve(14336);
 
+    json += F("{\"events\":[");
     if (simpleLogCount > 0) {
-        int start = (simpleLogCount < SIMPLE_LOG_CAPACITY) ? 0
-                   : (simpleLogHead + 1) % SIMPLE_LOG_CAPACITY;
-        for (int i = 0; i < simpleLogCount; i++) {
+        int total = simpleLogCount;
+        int count = (total < LIMIT) ? total : LIMIT;
+        int skip  = total - count;
+        int start = (total < SIMPLE_LOG_CAPACITY) ? skip
+                   : (simpleLogHead + 1 + skip) % SIMPLE_LOG_CAPACITY;
+        for (int i = 0; i < count; i++) {
             int idx = (start + i) % SIMPLE_LOG_CAPACITY;
-            JsonObject ev = arr.add<JsonObject>();
-            ev["t"]       = simpleLogBuffer[idx].timestamp;
-            ev["type"]    = String(simpleLogBuffer[idx].type);
-            ev["rssi"]    = simpleLogBuffer[idx].rssi;
-            ev["snr"]     = simpleLogBuffer[idx].snr;
-            // Always include MeshCore fields — use "?" for unknown (0xFF)
-            ev["route"]   = (simpleLogBuffer[idx].routeType != 0xFF)
-                          ? mc_route_type_name(simpleLogBuffer[idx].routeType) : "?";
-            ev["routeId"] = simpleLogBuffer[idx].routeType;
-            ev["payload"] = (simpleLogBuffer[idx].payloadType != 0xFF)
-                          ? mc_payload_type_name(simpleLogBuffer[idx].payloadType) : "?";
-            ev["payloadId"] = simpleLogBuffer[idx].payloadType;
-            ev["hops"]    = simpleLogBuffer[idx].hopCount;
-            ev["text"]    = simpleLogBuffer[idx].text[0]
-                          ? simpleLogBuffer[idx].text : "";
+            if (i > 0) json += ',';
+
+            json += F("{\"t\":");
+            json += simpleLogBuffer[idx].timestamp;
+            json += F(",\"type\":\"");
+            json += simpleLogBuffer[idx].type;
+            json += F("\",\"rssi\":");
+            json += simpleLogBuffer[idx].rssi;
+            json += F(",\"snr\":");
+            json += simpleLogBuffer[idx].snr;
+            json += F(",\"route\":\"");
+            json += (simpleLogBuffer[idx].routeType != 0xFF)
+                  ? mc_route_type_name(simpleLogBuffer[idx].routeType) : "?";
+            json += F("\",\"routeId\":");
+            json += simpleLogBuffer[idx].routeType;
+            json += F(",\"payload\":\"");
+            json += (simpleLogBuffer[idx].payloadType != 0xFF)
+                  ? mc_payload_type_name(simpleLogBuffer[idx].payloadType) : "?";
+            json += F("\",\"payloadId\":");
+            json += simpleLogBuffer[idx].payloadType;
+            json += F(",\"hops\":");
+            json += simpleLogBuffer[idx].hopCount;
+            json += F(",\"text\":");
+            if (simpleLogBuffer[idx].text[0]) {
+                appendJsonStr(json, simpleLogBuffer[idx].text);
+            } else {
+                json += F("\"\"");
+            }
+            json += '}';
         }
     }
-
-    String json;
-    serializeJson(doc, json);
+    json += F("]}");
     request->send(200, "application/json", json);
 }
 
@@ -302,7 +351,7 @@ static void handleApiTx(AsyncWebServerRequest* request) {
 
     bool ok = lora_tx((const uint8_t*)payload.c_str(), payload.length());
 
-    JsonDocument doc;
+    DynamicJsonDocument doc(256);
     doc["success"] = ok;
     doc["bytes"]   = payload.length();
 

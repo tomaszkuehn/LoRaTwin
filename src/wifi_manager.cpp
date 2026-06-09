@@ -183,7 +183,7 @@ void wifi_get_config(WifiConfig& cfg) {
 }
 
 void wifi_get_status_json(String& json) {
-    json.reserve(256);
+    json.reserve(512);  // SSID(32) + IP(15) + JSON framing ~150B, 512 safe
     json = '{';
     json += "\"mode\":\"";
     json += (g_wifiCfg.mode == WM_AP) ? "ap" : "sta";

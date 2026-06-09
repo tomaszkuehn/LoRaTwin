@@ -186,16 +186,34 @@ void display_show_error(const char* msg) {
     u8g2.setFont(u8g2_font_5x7_tf);
     u8g2.setCursor(0, 35);
 
-    // Zawijanie długich komunikatów
+    // Zawijanie długich komunikatów (UTF-8 safe)
     const char* p = msg;
     uint8_t line = 0;
     while (*p && line < 4) {
-        char buf[26];
-        strncpy(buf, p, 25);
-        buf[25] = '\0';
+        size_t len = strlen(p);
+        if (len > 25) {
+            len = 25;
+            // Don't split UTF-8: walk back from truncation past continuation bytes,
+            // find the nearest start byte that extends past len, drop it
+            size_t check = len;
+            while (check > 0 && ((p[check] & 0xC0) == 0x80)) check--;
+            if (check > 0) {
+                unsigned char b = (unsigned char)p[check - 1];
+                uint8_t seqLen = 0;
+                if      ((b & 0xE0) == 0xC0) seqLen = 2;
+                else if ((b & 0xF0) == 0xE0) seqLen = 3;
+                else if ((b & 0xF8) == 0xF0) seqLen = 4;
+                if (seqLen > 0 && check - 1 + seqLen > len) {
+                    len = check - 1;  // drop incomplete multi-byte char
+                }
+            }
+        }
+        char buf[32];
+        memcpy(buf, p, len);
+        buf[len] = '\0';
         u8g2.setCursor(0, 35 + line * 9);
         u8g2.print(buf);
-        p += min((int)strlen(p), 25);
+        p += len;
         line++;
     }
 
