@@ -13,7 +13,8 @@
 * { margin:0; padding:0; box-sizing:border-box; }
 body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
 h1 { font-size:1.3rem; font-weight:600; }
-h2 { font-size:1rem; font-weight:600; color:var(--accent); margin-bottom:.6em; }
+h2 { font-size:1rem; font-weight:600; color:var(--accent); margin-bottom:.6em; cursor:grab; user-select:none; }
+h2:active { cursor:grabbing; }
 .container { max-width:1100px; margin:0 auto; padding:1em; }
 
 header { display:flex; justify-content:space-between; align-items:center; padding:1em 0;
@@ -193,9 +194,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 <!-- == MODULE TEMPLATES (moved into drop zones by JS on init) == -->
 
 <!-- Konfiguracja WiFi -->
-<div id="sect-wifi" class="module-card collapsible" data-module="wifi" draggable="true" style="max-height:500px;">
+<div id="sect-wifi" class="module-card collapsible" data-module="wifi" style="max-height:500px;">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>📶 Konfiguracja WiFi</h2>
+<h2 draggable="true">📶 Konfiguracja WiFi</h2>
 <div class="config-panel">
   <div class="row">
     <div class="field">
@@ -223,8 +224,8 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Kafelki info -->
-<div id="sect-status" class="module-card collapsible" data-module="status" draggable="true" style="max-height:400px;">
-<div class="module-grip" title="Drag to move">⋮⋮</div>
+<div id="sect-status" class="module-card collapsible" data-module="status" style="max-height:400px;">
+<h2 draggable="true">📊 Status</h2>
 <div class="card-grid">
   <div class="card">
     <div class="label">WiFi / IP</div>
@@ -263,9 +264,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Konfiguracja radia -->
-<div id="sect-radio" class="module-card collapsible" data-module="radio" draggable="true" style="max-height:500px;">
+<div id="sect-radio" class="module-card collapsible" data-module="radio" style="max-height:500px;">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>⚙ Konfiguracja Radia</h2>
+<h2 draggable="true">⚙ Konfiguracja Radia</h2>
 <div class="config-panel">
   <div class="row">
     <div class="field">
@@ -316,9 +317,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Log uproszczony -->
-<div id="sect-log" class="module-card" data-module="log" draggable="true">
+<div id="sect-log" class="module-card" data-module="log">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>📋 Log zdarzeń</h2>
+<h2 draggable="true">📋 Log zdarzeń</h2>
 <div class="config-panel" style="max-height:280px; overflow-y:auto; padding:.5em 1em;">
   <table style="width:100%; font-size:.75rem; border-collapse:collapse;" id="simpleLogTable">
     <thead><tr style="color:var(--text2); text-align:left;">
@@ -333,8 +334,8 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Log pełny -->
-<div id="sect-fulllog" class="module-card" data-module="fulllog" draggable="true">
-<div class="module-grip" title="Drag to move">⋮⋮</div>
+<div id="sect-fulllog" class="module-card" data-module="fulllog">
+<h2 draggable="true">📋 Pełny log</h2>
 <details open>
   <summary style="cursor:pointer; color:var(--accent); font-size:.9rem; font-weight:600; padding:.3em 0;">
     📋 Pełny log (hex dump, CRC, Energy)
@@ -352,9 +353,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Filtry logu -->
-<div id="sect-filter" class="module-card" data-module="filter" draggable="true">
+<div id="sect-filter" class="module-card" data-module="filter">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>🔍 Filtry</h2>
+<h2 draggable="true">🔍 Filtry</h2>
 <div class="config-panel" style="padding:.5em .8em;">
   <div style="display:flex; gap:.4em; flex-wrap:wrap; align-items:center;">
     <span style="font-size:.75rem; color:var(--text2); margin-right:.4em;">Show:</span>
@@ -374,9 +375,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Mapa -->
-<div id="sect-map" class="module-card" data-module="map" draggable="true">
+<div id="sect-map" class="module-card" data-module="map">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>🗺 Nodes Map</h2>
+<h2 draggable="true">🗺 Nodes Map</h2>
 <div class="config-panel" style="padding:.3em;">
   <canvas id="mapCanvas" style="width:100%; height:300px; background:#0a0a14; border-radius:6px; cursor:grab;"></canvas>
   <div class="live-info" style="margin-top:.3em;" id="mapInfo">0 nodes</div>
@@ -384,9 +385,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Nadawanie -->
-<div id="sect-tx" class="module-card" data-module="tx" draggable="true">
+<div id="sect-tx" class="module-card" data-module="tx">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>📡 Nadaj ramkę</h2>
+<h2 draggable="true">📡 Nadaj ramkę</h2>
 <div class="config-panel">
   <div class="row">
     <div class="field" style="flex:1">
@@ -402,9 +403,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 
 <!-- Upload firmware -->
-<div id="sect-firmware" class="module-card collapsible" data-module="firmware" draggable="true" style="max-height:400px;">
+<div id="sect-firmware" class="module-card collapsible" data-module="firmware" style="max-height:400px;">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
-<h2>📦 Firmware Update</h2>
+<h2 draggable="true">📦 Firmware Update</h2>
 <div class="upload-zone" id="dropZone">
   <div class="icon">📦</div>
   <div class="txt">Upuść plik <b>.bin</b> lub <b>kliknij</b> by wybrać</div>
@@ -982,10 +983,10 @@ function loadLayout() {
 
 // --- HTML5 Drag & Drop ---
 document.addEventListener('dragstart', e => {
+  // Only h2 elements are draggable
+  if (!e.target.matches('h2')) return;
   const card = e.target.closest('.module-card');
   if (!card) return;
-  // Don't start drag from form controls
-  if (e.target.matches('input,select,button,textarea,label')) { e.preventDefault(); return; }
   dragMod = card.dataset.module;
   card.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
