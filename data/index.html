@@ -142,6 +142,21 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
   #sect-log table { font-size:.5rem; }
 }
 
+/* -- Filter buttons -- */
+.filt-btn { padding:.3em .7em; border:1px solid #3a3a6a; border-radius:14px; background:transparent;
+    color:var(--text2); cursor:pointer; font-size:.75rem; transition:all .15s; white-space:nowrap; }
+.filt-btn:hover { border-color:var(--accent); color:var(--text); }
+.filt-btn.sel { background:var(--accent); color:#000; border-color:var(--accent); font-weight:600; }
+
+.dedup-toggle { display:flex; align-items:center; cursor:pointer; gap:0; }
+.dedup-toggle input { display:none; }
+.dedup-slider { width:32px; height:18px; background:#3a3a6a; border-radius:9px; position:relative;
+    transition:background .2s; flex-shrink:0; }
+.dedup-slider::after { content:''; position:absolute; top:2px; left:2px; width:14px; height:14px;
+    background:#fff; border-radius:50%; transition:left .2s; }
+.dedup-toggle input:checked + .dedup-slider { background:var(--accent); }
+.dedup-toggle input:checked + .dedup-slider::after { left:16px; }
+
 @media (max-width:750px) {
   .drop-row { flex-direction:column; }
   .drop-left, .drop-right { flex:auto; }
@@ -336,6 +351,28 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </details>
 </div>
 
+<!-- Filtry logu -->
+<div id="sect-filter" class="module-card" data-module="filter" draggable="true">
+<div class="module-grip" title="Drag to move">⋮⋮</div>
+<h2>🔍 Filtry</h2>
+<div class="config-panel" style="padding:.5em .8em;">
+  <div style="display:flex; gap:.4em; flex-wrap:wrap; align-items:center;">
+    <span style="font-size:.75rem; color:var(--text2); margin-right:.4em;">Show:</span>
+    <button class="filt-btn sel" data-filt="repeater" onclick="toggleFilter('repeater')">📡 Repeaters</button>
+    <button class="filt-btn sel" data-filt="position" onclick="toggleFilter('position')">🧭 Position</button>
+    <button class="filt-btn sel" data-filt="text" onclick="toggleFilter('text')">💬 Text</button>
+    <button class="filt-btn sel" data-filt="tx" onclick="toggleFilter('tx')">📤 TX</button>
+    <button class="filt-btn" id="filtMode" onclick="toggleAndOr()" title="Match: OR (any) / AND (all)" style="font-size:.7rem;">OR</button>
+    <span style="flex:1;"></span>
+    <label class="dedup-toggle" title="Hide repeated frames">
+      <input type="checkbox" id="filtDedup" onchange="onFilterChange()">
+      <span class="dedup-slider"></span>
+      <span style="font-size:.72rem; color:var(--text2); margin-left:.3em;">Dedup</span>
+    </label>
+  </div>
+</div>
+</div>
+
 <!-- Nadawanie -->
 <div id="sect-tx" class="module-card" data-module="tx" draggable="true">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
@@ -399,6 +436,14 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <button class="col-btn" data-zone="left" onclick="setColumn('radio',0)">L</button>
       <button class="col-btn" data-zone="right" onclick="setColumn('radio',1)">R</button>
       <button class="col-btn" data-zone="hidden" onclick="hideModule('radio')" title="Hide">×</button>
+    </div>
+  </div>
+  <div class="menu-item"><span class="label">🔍 Filters</span>
+    <div class="col-group" data-mod="filter">
+      <button class="col-btn sel" data-zone="full" onclick="setColumn('filter',2)">≡</button>
+      <button class="col-btn" data-zone="left" onclick="setColumn('filter',0)">L</button>
+      <button class="col-btn" data-zone="right" onclick="setColumn('filter',1)">R</button>
+      <button class="col-btn" data-zone="hidden" onclick="hideModule('filter')" title="Hide">×</button>
     </div>
   </div>
   <div class="menu-item"><span class="label">📋 Log</span>
@@ -595,6 +640,71 @@ function uploadFirmware(file) {
 function showMsg(t,txt) { const m=$('msgBox'); m.className='msg '+t; m.textContent=txt; m.style.display='block'; }
 function hideMsg() { $('msgBox').className='msg'; $('msgBox').style.display='none'; }
 
+// --- Filters ---
+const activeFilters = new Set(['repeater','position','text','tx']);
+let andMode = false;
+
+function toggleAndOr() {
+  andMode = !andMode;
+  $('filtMode').textContent = andMode ? 'AND' : 'OR';
+  $('filtMode').classList.toggle('sel', andMode);
+  saveFilterState();
+  refreshSimpleLog();
+}
+
+function toggleFilter(type) {
+  if (activeFilters.has(type)) activeFilters.delete(type);
+  else activeFilters.add(type);
+  document.querySelectorAll('.filt-btn').forEach(b =>
+    b.classList.toggle('sel', activeFilters.has(b.dataset.filt)));
+  saveFilterState();
+  refreshSimpleLog();
+}
+
+function onFilterChange() {
+  saveFilterState();
+  refreshSimpleLog();
+}
+
+function getFilterState() {
+  return { dedup: $('filtDedup').checked, filters: [...activeFilters], andMode };
+}
+
+function saveFilterState() {
+  try { localStorage.setItem('lora-filter', JSON.stringify(getFilterState())); } catch(e) {}
+}
+
+function loadFilterState() {
+  let s;
+  try { s = JSON.parse(localStorage.getItem('lora-filter')); } catch(e) {}
+  if (!s) s = { dedup: false, filters: ['repeater','position','text','tx'], andMode: false };
+  activeFilters.clear();
+  (s.filters||['repeater','position','text','tx']).forEach(f => activeFilters.add(f));
+  andMode = s.andMode || false;
+  $('filtDedup').checked = s.dedup;
+  $('filtMode').textContent = andMode ? 'AND' : 'OR';
+  $('filtMode').classList.toggle('sel', andMode);
+  document.querySelectorAll('.filt-btn').forEach(b =>
+    b.classList.toggle('sel', activeFilters.has(b.dataset.filt)));
+}
+
+function filterEvent(e) {
+  if (activeFilters.size === 0) return true;
+  const checks = {
+    repeater: e.payload === 'ADVERT',
+    position: (e.display||'').indexOf('🧭') >= 0,
+    text:     e.text && !e.text.startsWith('dst=') && !e.text.startsWith('ch=0x'),
+    tx:       e.type === 'T'
+  };
+  if (andMode) {
+    for (const f of activeFilters) { if (!checks[f]) return false; }
+    return true;
+  } else {
+    for (const f of activeFilters) { if (checks[f]) return true; }
+    return false;
+  }
+}
+
 // --- Log uproszczony (domyślnie widoczny) ---
 const SIMPLE_TYPE_LABEL = { 'R':'📥 RX', 'T':'📤 TX' };
 
@@ -602,11 +712,26 @@ async function refreshSimpleLog() {
   try {
     const r = await fetch('/api/simplelog'); const d = await r.json();
     const events = d.events || [];
-    if (!events.length) { $('simpleLogEmpty').style.display='block'; $('simpleLogBody').innerHTML=''; return; }
+    const st = getFilterState();
+    // Filter
+    let filtered = events.filter(e => filterEvent(e));
+    // Dedup: remove frames with identical payload within this batch
+    if (st.dedup) {
+      const seen = new Set();
+      filtered = filtered.filter(e => {
+        if (e.type !== 'R') return true;  // don't dedup TX
+        const key = e.payload + '|' + (e.text||'');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+    if (!filtered.length) { $('simpleLogEmpty').style.display='block'; $('simpleLogBody').innerHTML=''; return; }
     $('simpleLogEmpty').style.display='none';
     let html = '';
-    for (let i = events.length-1; i >= Math.max(0, events.length-40); i--) {
-      const e = events[i];
+    const shown = filtered.slice(-40);  // last 40 after filtering
+    for (let i = shown.length-1; i >= 0; i--) {
+      const e = shown[i];
       const label = SIMPLE_TYPE_LABEL[e.type] || e.type;
       const route = e.route || '--';
       const payload = e.payload || '--';
@@ -775,7 +900,7 @@ function toggleMenu() {
 }
 
 // --- Drag & Drop layout ---
-const MODULES = ['wifi','status','radio','log','fulllog','tx','firmware'];
+const MODULES = ['wifi','status','radio','filter','log','fulllog','tx','firmware'];
 const ZONES  = ['full','left','right'];
 let dragMod = null;
 
@@ -875,6 +1000,7 @@ document.addEventListener('drop', e => {
 
 // --- Start ---
 loadLayout();
+loadFilterState();
 loadConfig();
 loadWifiConfig();
 refreshStatus();
