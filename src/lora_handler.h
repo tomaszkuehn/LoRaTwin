@@ -101,6 +101,7 @@ const char* proto_to_str(ProtoType p);
 // ––– MeshCore — nazwy pól –––
 const char* mc_route_type_name(uint8_t rt);
 const char* mc_payload_type_name(uint8_t pt);
+const char* mc_advert_type_name(uint8_t type);
 
 // ––– Zdekodowany nagłówek MeshCore –––
 struct MeshCoreInfo {

@@ -192,11 +192,47 @@ static void appendJsonStr(String& json, const char* s) {
     json += '"';
 }
 
-// ––– Format simple-log display text: extract name + compass from payload –––
-static void formatSimpleDisplay(const char* text, char* out, size_t outSize) {
+// ––– Format simple-log display text: node icon + name + compass –––
+static void formatSimpleDisplay(const char* text, uint8_t payloadType,
+                                char* out, size_t outSize) {
     if (!text || !text[0] || outSize < 4) {
         if (outSize > 0) out[0] = '\0';
         return;
+    }
+    // Reserve 5 bytes for UTF-8 icon prefix
+    char* outStart = out;
+    size_t outRem  = outSize;
+
+    // Node type icon (ADVERT payload only)
+    if (payloadType == 0x04) {
+        // Extract type nibble from "type=XXX" in the new text format
+        const char* typeTag = strstr(text, "type=");
+        if (typeTag) {
+            typeTag += 5;  // skip "type="
+        } else {
+            // Fallback: extract from raw flags in older text format "flags=0xXX"
+            const char* flagsTag = strstr(text, "flags=0x");
+            typeTag = flagsTag ? flagsTag + 8 : nullptr;  // point to first hex digit
+        }
+        if (typeTag && outRem > 5) {
+            uint8_t advType = 0xFF;
+            if (strncmp(typeTag, "CHAT", 4) == 0)      advType = 1;
+            else if (strncmp(typeTag, "REPEATER", 8) == 0) advType = 2;
+            else if (strncmp(typeTag, "ROOM", 4) == 0)  advType = 3;
+            else if (strncmp(typeTag, "SENSOR", 6) == 0) advType = 4;
+            else advType = 0;  // NONE or unknown
+
+            switch (advType) {
+                case 1: *out++ = (char)0xF0; *out++ = (char)0x9F; *out++ = (char)0x92; *out++ = (char)0xAC; break; // 💬 CHAT
+                case 2: *out++ = (char)0xF0; *out++ = (char)0x9F; *out++ = (char)0x93; *out++ = (char)0xA1; break; // 📡 REPEATER
+                case 3: *out++ = (char)0xF0; *out++ = (char)0x9F; *out++ = (char)0x8F; *out++ = (char)0xA0; break; // 🏠 ROOM
+                case 4: *out++ = (char)0xF0; *out++ = (char)0x9F; *out++ = (char)0x8C; *out++ = (char)0xA1; break; // 🌡️ SENSOR
+                default: *out++ = ' '; *out++ = ' '; *out++ = ' '; *out++ = ' '; break; // no icon, padding
+            }
+            *out = '\0';
+            outRem = outSize - (out - outStart);
+            outStart = out;
+        }
     }
 
     bool hasName   = false;
@@ -208,7 +244,7 @@ static void formatSimpleDisplay(const char* text, char* out, size_t outSize) {
         nameStart += 6;
         const char* nameEnd = strchr(nameStart, '\'');
         size_t nlen = nameEnd ? (size_t)(nameEnd - nameStart) : strlen(nameStart);
-        if (nlen > outSize - 5) nlen = outSize - 5;
+        if (nlen > outRem - 5) nlen = outRem - 5;
         memcpy(out, nameStart, nlen);
         out[nlen] = '\0';
         hasName = true;
@@ -222,9 +258,9 @@ static void formatSimpleDisplay(const char* text, char* out, size_t outSize) {
     if (hasName) {
         if (hasCoords) {
             size_t pos = strlen(out);
-            if (pos + 5 < outSize) {
+            if (pos + 5 < outRem) {
                 out[pos++] = ' ';
-                out[pos++] = (char)0xF0;  // 🧭 U+1F9ED compass
+                out[pos++] = (char)0xF0;  // 🧭 compass
                 out[pos++] = (char)0x9F;
                 out[pos++] = (char)0xA7;
                 out[pos++] = (char)0xAD;
@@ -234,15 +270,16 @@ static void formatSimpleDisplay(const char* text, char* out, size_t outSize) {
     } else {
         // No name → show compact summary or fallback
         if (hasCoords) {
-            out[0] = (char)0xF0; out[1] = (char)0x9F; out[2] = (char)0xA7;
-            out[3] = (char)0xAD; out[4] = '\0';    // just 🧭
+            if (outRem > 5) {
+                out[0] = (char)0xF0; out[1] = (char)0x9F; out[2] = (char)0xA7;
+                out[3] = (char)0xAD; out[4] = '\0';    // just 🧭
+            }
         } else {
             // Show first 40 chars of text, trimmed
             size_t n = strlen(text);
             if (n > 40) n = 40;
             memcpy(out, text, n);
             out[n] = '\0';
-            // Strip trailing newlines
             while (n > 0 && (out[n-1] == '\n' || out[n-1] == '\r')) out[--n] = '\0';
         }
     }
@@ -386,10 +423,12 @@ static void handleApiLogSimple(AsyncWebServerRequest* request) {
             } else {
                 json += F("\"\"");
             }
-            // Display text: name + compass / coords / fallback
+            // Display text: node icon + name + compass / coords / fallback
             {
                 char disp[64];
-                formatSimpleDisplay(simpleLogBuffer[idx].text, disp, sizeof(disp));
+                formatSimpleDisplay(simpleLogBuffer[idx].text,
+                                    simpleLogBuffer[idx].payloadType,
+                                    disp, sizeof(disp));
                 json += F(",\"display\":");
                 appendJsonStr(json, disp);
             }

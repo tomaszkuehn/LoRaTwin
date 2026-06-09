@@ -180,6 +180,17 @@ const char* mc_payload_type_name(uint8_t pt) {
     }
 }
 
+const char* mc_advert_type_name(uint8_t type) {
+    switch (type) {
+        case 0: return "NONE";
+        case 1: return "CHAT";
+        case 2: return "REPEATER";
+        case 3: return "ROOM";
+        case 4: return "SENSOR";
+        default: return "?";
+    }
+}
+
 // ––– Dekoder pakietu MeshCore (wg packet_format.md) –––
 // Format: [header 1B] [transport_codes 4B?] [path_length 1B] [path N B] [payload]
 // Header: 0bVVPPPPRR  (V=version, P=payloadType, R=routeType)
@@ -270,27 +281,30 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
 
     // --- ADVERT (0x04) ---
     case 0x04: {
-        if (remain < 100) { snprintf(buf, bufSize, "ADVERT: too short (%uB)", remain); return; }
+        if (remain < 32) { snprintf(buf, bufSize, "ADVERT: too short (%uB)", remain); return; }
         // pubkey prefix (first 4 bytes)
         snprintf(buf, bufSize, "pub=0x%02X%02X%02X%02X",
                  p[0], p[1], p[2], p[3]);
         size_t pos = strlen(buf);
-        // timestamp
-        uint32_t ts = read32le(p + 32);
-        if (ts > 1000000000) {
-            snprintf(buf + pos, bufSize - pos, " ts=%u", ts);
-            pos = strlen(buf);
+        // timestamp (offset 32, before signature)
+        if (remain >= 36) {
+            uint32_t ts = read32le(p + 32);
+            if (ts > 1000000000) {
+                snprintf(buf + pos, bufSize - pos, " ts=%u", ts);
+                pos = strlen(buf);
+            }
         }
-        // appdata (after 32+4+64 = 100 bytes)
+        // appdata (after pubkey 32B + timestamp 4B + signature 64B = 100)
         if (remain > 100) {
             const uint8_t* ap = p + 100;
             uint16_t apLen = remain - 100;
             if (apLen > 0) {
                 uint8_t flags = ap[0];
-                snprintf(buf + pos, bufSize - pos, " flags=0x%02X", flags);
+                uint8_t advType = flags & 0x0F;
+                snprintf(buf + pos, bufSize - pos, " type=%s", mc_advert_type_name(advType));
                 pos = strlen(buf);
                 uint8_t off = 1;
-                // lat/lon
+                // lat/lon (bit 4)
                 if ((flags & 0x10) && off + 8 <= apLen) {
                     int32_t lat = (int32_t)read32le(ap + off);
                     int32_t lon = (int32_t)read32le(ap + off + 4);
@@ -299,10 +313,21 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
                     pos = strlen(buf);
                     off += 8;
                 }
-                // feature fields
-                if ((flags & 0x20) && off + 2 <= apLen) off += 2;
-                if ((flags & 0x40) && off + 2 <= apLen) off += 2;
-                // name
+                // feat1 (bit 5)
+                if ((flags & 0x20) && off + 2 <= apLen) {
+                    uint16_t f1 = (uint16_t)ap[off] | ((uint16_t)ap[off+1] << 8);
+                    snprintf(buf + pos, bufSize - pos, " feat1=0x%04X", f1);
+                    pos = strlen(buf);
+                    off += 2;
+                }
+                // feat2 (bit 6)
+                if ((flags & 0x40) && off + 2 <= apLen) {
+                    uint16_t f2 = (uint16_t)ap[off] | ((uint16_t)ap[off+1] << 8);
+                    snprintf(buf + pos, bufSize - pos, " feat2=0x%04X", f2);
+                    pos = strlen(buf);
+                    off += 2;
+                }
+                // name (bit 7)
                 if ((flags & 0x80) && off < apLen) {
                     uint8_t nameLen = min((uint16_t)(apLen - off), (uint16_t)40);
                     snprintf(buf + pos, bufSize - pos, " name='%.*s'", nameLen, ap + off);
@@ -314,19 +339,51 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
 
     // --- TXT_MSG (0x02) ---
     case 0x02: {
-        if (remain < 6) { snprintf(buf, bufSize, "TXT: too short (%uB)", remain); return; }
-        uint32_t ts = read32le(p);
-        uint8_t txtType = p[4] >> 2;
-        uint8_t attempt = p[4] & 0x03;
-        const char* tname = (txtType == 0) ? "text" : (txtType == 1) ? "CLI" : "signed";
-        snprintf(buf, bufSize, "%s #%u ", tname, attempt);
-        size_t pos = strlen(buf);
-        uint16_t msgLen = remain - 5;
-        if (msgLen > 0) {
-            uint8_t show = min(msgLen, (uint16_t)(bufSize - pos - 4));
-            memcpy(buf + pos, p + 5, show);
-            buf[pos + show] = '\0';
-            if (msgLen > show) strcat(buf, "...");
+        if (remain < 2) { snprintf(buf, bufSize, "TXT: too short (%uB)", remain); return; }
+        // Distinguish unencrypted vs encrypted by validating txtType/attempt
+        // PLUS checking that text bytes look like real text (not random ciphertext).
+        // Unencrypted: [timestamp 4B LE] [txtType:2b|attempt:2b 1B] [text N B]
+        // Encrypted:   [dest 1B] [src 1B] [cipher MAC 2B] [ciphertext N B]
+        uint8_t  tb = (remain >= 5) ? p[4] : 0xFF;
+        uint8_t  txtType = tb >> 2;
+        uint8_t  attempt = tb & 0x03;
+        // Count printable ASCII bytes in first 8 chars of text (or full text if shorter)
+        uint8_t textCheck  = (remain > 5) ? ((remain - 5) < 8 ? (uint8_t)(remain - 5) : 8) : 0;
+        uint8_t printables = 0;
+        for (uint8_t k = 0; k < textCheck; k++) {
+            char c = (char)p[5 + k];
+            if (c >= 0x20 && c < 0x7F) printables++;  // printable ASCII
+            else if (c == '\n' || c == '\r' || c == '\t') printables++;  // whitespace
+        }
+        // Require valid txtType + ≥75% of first text bytes are printable
+        bool looksPlain = (remain >= 6)
+                       && (txtType <= 2)
+                       && (attempt <= 3)
+                       && (textCheck == 0 || printables * 4 >= textCheck * 3);  // ≥75%
+        if (looksPlain) {
+            uint32_t ts = read32le(p);
+            const char* tname = (txtType == 0) ? "text" : (txtType == 1) ? "CLI" : "signed";
+            snprintf(buf, bufSize, "%s #%u {%us} ", tname, attempt, ts);
+            size_t pos = strlen(buf);
+            uint16_t msgLen = remain - 5;
+            if (msgLen > 0) {
+                uint8_t show = min(msgLen, (uint16_t)(bufSize - pos - 4));
+                for (uint8_t k = 0; k < show; k++) {
+                    char c = (char)p[5 + k];
+                    buf[pos + k] = (c >= 0x20 && c < 0x7F) ? c : '.';
+                }
+                buf[pos + show] = '\0';
+                if (msgLen > show) strcat(buf, "...");
+            }
+        } else {
+            // Encrypted: [dest 1B] [src 1B] [cipher MAC 2B] [encrypted blob]
+            if (remain < 4) {
+                snprintf(buf, bufSize, "dst=0x%02X src=0x%02X (too short)", p[0], p[1]);
+            } else {
+                uint16_t mac = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
+                snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X enc=%uB",
+                         p[0], p[1], mac, remain - 4);
+            }
         }
         return;
     }
@@ -340,37 +397,38 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
     }
 
     // --- REQ (0x00), RESPONSE (0x01), PATH (0x08) ---
+    // Protocol: [dest 1B] [src 1B] [cipher MAC 2B] [ciphertext ...]
     case 0x00:
     case 0x01:
     case 0x08: {
         if (remain < 4) { snprintf(buf, bufSize, "%s: too short (%uB)",
                                      mc_payload_type_name(info.payloadType), remain); return; }
+        uint16_t mac = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
         snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X enc=%uB",
-                 p[0], p[1],
-                 (uint16_t)p[2] | ((uint16_t)p[3] << 8),
-                 remain - 4);
+                 p[0], p[1], mac, remain - 4);
         return;
     }
 
     // --- ANON_REQ (0x07) ---
+    // Protocol: [dest 1B] [pubkey 32B] [cipher MAC 2B] [ciphertext ...]
     case 0x07: {
-        if (remain < 35) { snprintf(buf, bufSize, "ANON_REQ: too short (%uB)", remain); return; }
-        snprintf(buf, bufSize, "dst=0x%02X pub=0x%02X%02X... mac=0x%04X enc=%uB",
-                 p[0], p[1], p[2],
-                 (uint16_t)p[33] | ((uint16_t)p[34] << 8),
-                 remain - 35);
+        if (remain < 36) { snprintf(buf, bufSize, "ANON_REQ: too short (%uB)", remain); return; }
+        uint16_t mac = (uint16_t)p[33] | ((uint16_t)p[34] << 8);
+        snprintf(buf, bufSize, "dst=0x%02X pub=0x%02X%02X%02X%02X... mac=0x%04X enc=%uB",
+                 p[0], p[1], p[2], p[3], p[4],
+                 mac, remain - 35);
         return;
     }
 
     // --- GRP_TXT (0x05), GRP_DATA (0x06) ---
+    // Protocol: [channelHash 1B] [cipher MAC 2B] [ciphertext ...]
     case 0x05:
     case 0x06: {
         if (remain < 3) { snprintf(buf, bufSize, "%s: too short (%uB)",
                                      mc_payload_type_name(info.payloadType), remain); return; }
+        uint16_t mac = (uint16_t)p[1] | ((uint16_t)p[2] << 8);
         snprintf(buf, bufSize, "ch=0x%02X mac=0x%04X enc=%uB",
-                 p[0],
-                 (uint16_t)p[1] | ((uint16_t)p[2] << 8),
-                 remain - 3);
+                 p[0], mac, remain - 3);
         return;
     }
 
@@ -387,16 +445,19 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
     }
 
     // --- CONTROL (0x0B) ---
+    // Protocol: [subType:4b | flags:4b 1B] [data N B]
     case 0x0B: {
         if (remain < 1) { snprintf(buf, bufSize, "CONTROL: empty"); return; }
         uint8_t subType = p[0] >> 4;
+        uint8_t flags   = p[0] & 0x0F;
         const char* subName = "?";
         switch (subType) {
             case 0x8: subName = "DISCOVER_REQ"; break;
             case 0x9: subName = "DISCOVER_RESP"; break;
             default: break;
         }
-        snprintf(buf, bufSize, "sub=%s(%u) data=%uB", subName, subType, remain - 1);
+        snprintf(buf, bufSize, "sub=%s(%u) flags=0x%X data=%uB",
+                 subName, subType, flags, remain - 1);
         return;
     }
 
@@ -668,6 +729,16 @@ void lora_process() {
                 Serial.printf(" TC1=0x%04X TC2=0x%04X", mc.transport1, mc.transport2);
             }
             Serial.printf(" PathLen=%u\n", mc.pathLen);
+            // Hex dump of path hashes (one per hop)
+            if (mc.hopCount > 0 && mc.pathLen > 0) {
+                Serial.print(F("       Path: "));
+                for (uint8_t h = 0; h < mc.hopCount && h * mc.hashSize < mc.pathLen; h++) {
+                    if (h > 0) Serial.print(' ');
+                    for (uint8_t b = 0; b < mc.hashSize; b++)
+                        Serial.printf("%02X", pkt.data[mc.payloadOffset - mc.pathLen + h * mc.hashSize + b]);
+                }
+                Serial.println();
+            }
             // Dekoduj payload
             char payloadBuf[128];
             decode_payload_summary(pkt.data, pkt.len, mc, payloadBuf, sizeof(payloadBuf));
