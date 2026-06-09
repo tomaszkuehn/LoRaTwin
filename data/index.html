@@ -500,7 +500,7 @@ async function refreshSimpleLog() {
       const route = e.route || '--';
       const payload = e.payload || '--';
       const hops = (e.hops !== undefined) ? e.hops : '--';
-      const text = e.text || '';
+      const display = e.display || '-';
       const rssi = e.rssi ? e.rssi.toFixed(0)+'dB' : '';
       const snr = e.snr ? e.snr.toFixed(1)+'dB' : '';
       const sigInfo = rssi ? rssi+' / '+snr : '';
@@ -511,7 +511,7 @@ async function refreshSimpleLog() {
         '<td style="padding:2px 4px;vertical-align:top;color:#0f0">'+payload+'</td>'+
         '<td style="padding:2px 4px;vertical-align:top">'+hops+'</td>'+
         '<td style="padding:2px 4px;vertical-align:top">'+
-          '<span style="color:#e0e0e0">'+escapeHtml(text)+'</span>'+
+          '<span style="color:#e0e0e0">'+escapeHtml(display)+'</span>'+
           (sigInfo ? ' <span style="color:var(--text2);font-size:.65rem">'+sigInfo+'</span>' : '')+
         '</td></tr>';
     }

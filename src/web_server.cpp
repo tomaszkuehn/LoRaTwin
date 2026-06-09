@@ -192,6 +192,62 @@ static void appendJsonStr(String& json, const char* s) {
     json += '"';
 }
 
+// ––– Format simple-log display text: extract name + compass from payload –––
+static void formatSimpleDisplay(const char* text, char* out, size_t outSize) {
+    if (!text || !text[0] || outSize < 4) {
+        if (outSize > 0) out[0] = '\0';
+        return;
+    }
+
+    bool hasName   = false;
+    bool hasCoords = false;
+
+    // Extract name='...'
+    const char* nameStart = strstr(text, "name='");
+    if (nameStart) {
+        nameStart += 6;
+        const char* nameEnd = strchr(nameStart, '\'');
+        size_t nlen = nameEnd ? (size_t)(nameEnd - nameStart) : strlen(nameStart);
+        if (nlen > outSize - 5) nlen = outSize - 5;
+        memcpy(out, nameStart, nlen);
+        out[nlen] = '\0';
+        hasName = true;
+    }
+
+    // Check for lat/lon
+    if (strstr(text, "lat=") && strstr(text, "lon=")) {
+        hasCoords = true;
+    }
+
+    if (hasName) {
+        if (hasCoords) {
+            size_t pos = strlen(out);
+            if (pos + 5 < outSize) {
+                out[pos++] = ' ';
+                out[pos++] = (char)0xF0;  // 🧭 U+1F9ED compass
+                out[pos++] = (char)0x9F;
+                out[pos++] = (char)0xA7;
+                out[pos++] = (char)0xAD;
+                out[pos]   = '\0';
+            }
+        }
+    } else {
+        // No name → show compact summary or fallback
+        if (hasCoords) {
+            out[0] = (char)0xF0; out[1] = (char)0x9F; out[2] = (char)0xA7;
+            out[3] = (char)0xAD; out[4] = '\0';    // just 🧭
+        } else {
+            // Show first 40 chars of text, trimmed
+            size_t n = strlen(text);
+            if (n > 40) n = 40;
+            memcpy(out, text, n);
+            out[n] = '\0';
+            // Strip trailing newlines
+            while (n > 0 && (out[n-1] == '\n' || out[n-1] == '\r')) out[--n] = '\0';
+        }
+    }
+}
+
 // ––– GET /api/log — pobierz log zdarzeń (max 30 ostatnich wpisów) –––
 static void handleApiLog(AsyncWebServerRequest* request) {
     const int LIMIT = 30;
@@ -323,11 +379,19 @@ static void handleApiLogSimple(AsyncWebServerRequest* request) {
             json += simpleLogBuffer[idx].payloadType;
             json += F(",\"hops\":");
             json += simpleLogBuffer[idx].hopCount;
+            // Raw text
             json += F(",\"text\":");
             if (simpleLogBuffer[idx].text[0]) {
                 appendJsonStr(json, simpleLogBuffer[idx].text);
             } else {
                 json += F("\"\"");
+            }
+            // Display text: name + compass / coords / fallback
+            {
+                char disp[64];
+                formatSimpleDisplay(simpleLogBuffer[idx].text, disp, sizeof(disp));
+                json += F(",\"display\":");
+                appendJsonStr(json, disp);
             }
             json += '}';
         }
