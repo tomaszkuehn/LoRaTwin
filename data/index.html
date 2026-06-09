@@ -315,9 +315,12 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
   </table>
   <div class="live-info" id="simpleLogEmpty" style="margin-top:.5em;">Brak zdarzeń.</div>
 </div>
+</div>
 
-<!-- Log pełny (zwijany) -->
-<details style="margin-top:.5em;">
+<!-- Log pełny -->
+<div id="sect-fulllog" class="module-card" data-module="fulllog" draggable="true">
+<div class="module-grip" title="Drag to move">⋮⋮</div>
+<details open>
   <summary style="cursor:pointer; color:var(--accent); font-size:.9rem; font-weight:600; padding:.3em 0;">
     📋 Pełny log (hex dump, CRC, Energy)
   </summary>
@@ -404,6 +407,14 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <button class="col-btn" data-zone="left" onclick="setColumn('log',0)">L</button>
       <button class="col-btn" data-zone="right" onclick="setColumn('log',1)">R</button>
       <button class="col-btn" data-zone="hidden" onclick="hideModule('log')" title="Hide">×</button>
+    </div>
+  </div>
+  <div class="menu-item"><span class="label">📋 Full Log</span>
+    <div class="col-group" data-mod="fulllog">
+      <button class="col-btn sel" data-zone="full" onclick="setColumn('fulllog',2)">≡</button>
+      <button class="col-btn" data-zone="left" onclick="setColumn('fulllog',0)">L</button>
+      <button class="col-btn" data-zone="right" onclick="setColumn('fulllog',1)">R</button>
+      <button class="col-btn" data-zone="hidden" onclick="hideModule('fulllog')" title="Hide">×</button>
     </div>
   </div>
   <div class="menu-item"><span class="label">📡 TX Send</span>
@@ -764,7 +775,7 @@ function toggleMenu() {
 }
 
 // --- Drag & Drop layout ---
-const MODULES = ['wifi','status','radio','log','tx','firmware'];
+const MODULES = ['wifi','status','radio','log','fulllog','tx','firmware'];
 const ZONES  = ['full','left','right'];
 let dragMod = null;
 
