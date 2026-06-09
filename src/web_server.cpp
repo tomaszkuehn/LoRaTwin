@@ -76,6 +76,7 @@ static void handleApiStatus(AsyncWebServerRequest* request) {
     doc["lora_sf"]      = lora_get_sf();
     doc["lora_bw_khz"]  = lora_get_bandwidth();
     doc["lora_cr"]      = lora_get_cr();
+    doc["profile"]      = (uint8_t)g_settings.profile;
     doc["packets_received"] = packetCount;
     doc["current_rssi"] = currentRssi;
     doc["last_rssi"]    = lastRssi;

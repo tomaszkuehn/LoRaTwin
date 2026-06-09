@@ -376,13 +376,16 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
                 if (msgLen > show) strcat(buf, "...");
             }
         } else {
-            // Encrypted: [dest 1B] [src 1B] [cipher MAC 2B] [encrypted blob]
+            // Encrypted: [dest 1B] [src 1B] [cipher MAC 2B] [AES-256-GCM blob]
+            // GCM blob = 12B nonce + ciphertext + 16B auth tag
             if (remain < 4) {
                 snprintf(buf, bufSize, "dst=0x%02X src=0x%02X (too short)", p[0], p[1]);
             } else {
                 uint16_t mac = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
-                snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X enc=%uB",
-                         p[0], p[1], mac, remain - 4);
+                uint16_t blob = remain - 4;
+                int16_t  ctext = (blob >= 28) ? (blob - 28) : blob;
+                snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X GCM:%uB ctext",
+                         p[0], p[1], mac, ctext);
             }
         }
         return;
@@ -397,38 +400,44 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
     }
 
     // --- REQ (0x00), RESPONSE (0x01), PATH (0x08) ---
-    // Protocol: [dest 1B] [src 1B] [cipher MAC 2B] [ciphertext ...]
+    // Protocol: [dest 1B] [src 1B] [cipher MAC 2B] [AES-256-GCM blob]
     case 0x00:
     case 0x01:
     case 0x08: {
         if (remain < 4) { snprintf(buf, bufSize, "%s: too short (%uB)",
                                      mc_payload_type_name(info.payloadType), remain); return; }
-        uint16_t mac = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
-        snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X enc=%uB",
-                 p[0], p[1], mac, remain - 4);
+        uint16_t mac  = (uint16_t)p[2] | ((uint16_t)p[3] << 8);
+        uint16_t blob = remain - 4;
+        int16_t  ctext = (blob >= 28) ? (blob - 28) : blob;
+        snprintf(buf, bufSize, "dst=0x%02X src=0x%02X mac=0x%04X GCM:%uB ctext",
+                 p[0], p[1], mac, ctext);
         return;
     }
 
     // --- ANON_REQ (0x07) ---
-    // Protocol: [dest 1B] [pubkey 32B] [cipher MAC 2B] [ciphertext ...]
+    // Protocol: [dest 1B] [pubkey 32B] [cipher MAC 2B] [AES-256-GCM blob]
     case 0x07: {
         if (remain < 36) { snprintf(buf, bufSize, "ANON_REQ: too short (%uB)", remain); return; }
-        uint16_t mac = (uint16_t)p[33] | ((uint16_t)p[34] << 8);
-        snprintf(buf, bufSize, "dst=0x%02X pub=0x%02X%02X%02X%02X... mac=0x%04X enc=%uB",
+        uint16_t mac  = (uint16_t)p[33] | ((uint16_t)p[34] << 8);
+        uint16_t blob = remain - 35;
+        int16_t  ctext = (blob >= 28) ? (blob - 28) : blob;
+        snprintf(buf, bufSize, "dst=0x%02X pub=0x%02X%02X%02X%02X... mac=0x%04X GCM:%uB ctext",
                  p[0], p[1], p[2], p[3], p[4],
-                 mac, remain - 35);
+                 mac, ctext);
         return;
     }
 
     // --- GRP_TXT (0x05), GRP_DATA (0x06) ---
-    // Protocol: [channelHash 1B] [cipher MAC 2B] [ciphertext ...]
+    // Protocol: [channelHash 1B] [cipher MAC 2B] [AES-256-GCM blob]
     case 0x05:
     case 0x06: {
         if (remain < 3) { snprintf(buf, bufSize, "%s: too short (%uB)",
                                      mc_payload_type_name(info.payloadType), remain); return; }
-        uint16_t mac = (uint16_t)p[1] | ((uint16_t)p[2] << 8);
-        snprintf(buf, bufSize, "ch=0x%02X mac=0x%04X enc=%uB",
-                 p[0], mac, remain - 3);
+        uint16_t mac  = (uint16_t)p[1] | ((uint16_t)p[2] << 8);
+        uint16_t blob = remain - 3;
+        int16_t  ctext = (blob >= 28) ? (blob - 28) : blob;
+        snprintf(buf, bufSize, "ch=0x%02X mac=0x%04X GCM:%uB ctext",
+                 p[0], mac, ctext);
         return;
     }
 
