@@ -223,10 +223,23 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 </div>
 
-<!-- Kafelki info -->
-<div id="sect-status" class="module-card collapsible" data-module="status" style="max-height:400px;">
+<!-- Status -->
+<div id="sect-status" class="module-card collapsible" data-module="status" style="max-height:500px;">
 <h2 draggable="true">📊 Status</h2>
-<div class="card-grid">
+<!-- LoRa info -->
+<div class="lora-info">
+  <div style="display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
+    <span id="profileBadge" style="font-size:.7rem; font-weight:700; padding:.2em .7em; border-radius:4px;
+      text-transform:uppercase; letter-spacing:.5px;">--</span>
+    <span class="freq" id="loraLabel">869.525 MHz</span>
+  </div>
+  <div class="meta">
+    <span id="loraParams">SF11 / BW250 / CR4/8</span>
+    <span id="freqErr">FreqErr: -- Hz</span>
+    <span id="syncWord">Sync: 0x2B</span>
+  </div>
+</div>
+<div class="card-grid" style="margin-top:.6em;">
   <div class="card">
     <div class="label">WiFi / IP</div>
     <div class="value" style="font-size:1rem" id="ipAddr">--</div>
@@ -246,19 +259,10 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
     <div class="value" style="font-size:1rem" id="freeHeap">--</div>
     <div class="sub" id="flashInfo"></div>
   </div>
-</div>
-
-<!-- LoRa info -->
-<div class="lora-info">
-  <div style="display:flex; align-items:center; gap:.6em; flex-wrap:wrap;">
-    <span id="profileBadge" style="font-size:.7rem; font-weight:700; padding:.2em .7em; border-radius:4px;
-      text-transform:uppercase; letter-spacing:.5px;">--</span>
-    <span class="freq" id="loraLabel">869.525 MHz</span>
-  </div>
-  <div class="meta">
-    <span id="loraParams">SF11 / BW250 / CR4/8</span>
-    <span id="freqErr">FreqErr: -- Hz</span>
-    <span id="syncWord">Sync: 0x2B</span>
+  <div class="card">
+    <div class="label">Last TX</div>
+    <div class="value" style="font-size:.95rem" id="lastTx">--</div>
+    <div class="sub" id="lastTxDetail"></div>
   </div>
 </div>
 </div>
@@ -398,6 +402,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
   <div class="live-info" id="txInfo">Nagłówek (14 B) + payload</div>
   <div class="btn-row">
     <button class="btn" onclick="sendTx()">📤 Wyślij</button>
+    <span id="txMsg" style="font-size:.8rem; margin-left:.8em; display:none;"></span>
   </div>
 </div>
 </div>
@@ -544,6 +549,12 @@ function fmtUptime(s) {
   return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';
 }
 
+function updateLastTx() {
+  if (!window.lastTxReal) { $('lastTx').textContent = '--'; return; }
+  const ago = Math.floor((Date.now() - window.lastTxReal) / 1000);
+  $('lastTx').textContent = ago < 60 ? ago+'s ago' : ago < 3600 ? Math.floor(ago/60)+'m ago' : Math.floor(ago/3600)+'h ago';
+}
+
 function fmtTime(deviceMs) {
   // Przelicza timestamp urządzenia (millis od bootu) na HH:MM:SS
   if (!deviceBootMs) return (deviceMs/1000).toFixed(1)+'s';
@@ -609,17 +620,26 @@ async function resetConfig() {
 }
 
 // --- TX ---
+let txMsgTimer = 0;
+function txMsg(cls, text) {
+  const el = $('txMsg');
+  el.textContent = text; el.className = ''; el.style.display = 'inline';
+  el.style.color = cls === 'ok' ? 'var(--green)' : 'var(--red)';
+  clearTimeout(txMsgTimer);
+  txMsgTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
 async function sendTx() {
   const data = $('txData').value.trim();
-  if (!data) { showMsg('err', 'Wpisz tekst do wysłania.'); return; }
+  if (!data) { txMsg('err', 'Wpisz tekst do wysłania.'); return; }
   try {
     const r = await fetch('/api/tx', { method:'POST',
       headers:{'Content-Type':'application/x-www-form-urlencoded'},
       body: 'data='+encodeURIComponent(data) });
     const d = await r.json();
-    if (d.success) showMsg('ok', 'Wysłano '+d.bytes+' bajtów!');
-    else showMsg('err', 'Błąd nadawania.');
-  } catch(e) { showMsg('err', 'Błąd sieci.'); }
+    if (d.success) { txMsg('ok', 'Wysłano '+d.bytes+' B'); $('txData').value = ''; }
+    else txMsg('err', 'Błąd nadawania.');
+  } catch(e) { txMsg('err', 'Błąd sieci.'); }
 }
 
 // --- Upload ---
@@ -732,6 +752,15 @@ async function refreshSimpleLog() {
     const r = await fetch('/api/simplelog'); const d = await r.json();
     const events = d.events || [];
     updateNodePositions(events);  // feed map
+    // Track last TX time — only update if newer than previous
+    let latestTxDev = 0;
+    for (const e of events) {
+      if (e.type === 'T' && e.t > latestTxDev) latestTxDev = e.t;
+    }
+    if (latestTxDev > (window.lastTxDev || 0)) {
+      window.lastTxDev = latestTxDev;
+      window.lastTxReal = Date.now();
+    }
     const st = getFilterState();
     // Filter
     let filtered = events.filter(e => filterEvent(e));
@@ -1040,6 +1069,7 @@ function updateNodePositions(events) {
     if (e.payload !== 'ADVERT') continue;
     const pos = parseLatLon(e.text||'');
     if (!pos) continue;
+    if (pos.lat === 0 && pos.lon === 0) continue;  // ignore null position
     const key = pos.name !== '?' ? pos.name : (pos.lat.toFixed(4)+','+pos.lon.toFixed(4));
     nodePositions.set(key, { ...pos, seen: now });
   }
@@ -1180,6 +1210,7 @@ refreshStatus();
 refreshSimpleLog();
 refreshLog();
 setInterval(refreshStatus, 2000);
+setInterval(updateLastTx, 2000);
 setInterval(refreshSimpleLog, 5000);
 setInterval(refreshLog, 30000);
 setInterval(loadWifiConfig, 30000);

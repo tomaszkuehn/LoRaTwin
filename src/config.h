@@ -48,4 +48,4 @@
 #define OLED_ADDR   0x3C
 
 // ––– Firmware info –––
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "0.9.0"
