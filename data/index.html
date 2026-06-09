@@ -373,6 +373,16 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 </div>
 
+<!-- Mapa -->
+<div id="sect-map" class="module-card" data-module="map" draggable="true">
+<div class="module-grip" title="Drag to move">⋮⋮</div>
+<h2>🗺 Nodes Map</h2>
+<div class="config-panel" style="padding:.3em;">
+  <canvas id="mapCanvas" style="width:100%; height:300px; background:#0a0a14; border-radius:6px; cursor:grab;"></canvas>
+  <div class="live-info" style="margin-top:.3em;" id="mapInfo">0 nodes</div>
+</div>
+</div>
+
 <!-- Nadawanie -->
 <div id="sect-tx" class="module-card" data-module="tx" draggable="true">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
@@ -444,6 +454,14 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <button class="col-btn" data-zone="left" onclick="setColumn('filter',0)">L</button>
       <button class="col-btn" data-zone="right" onclick="setColumn('filter',1)">R</button>
       <button class="col-btn" data-zone="hidden" onclick="hideModule('filter')" title="Hide">×</button>
+    </div>
+  </div>
+  <div class="menu-item"><span class="label">🗺 Nodes Map</span>
+    <div class="col-group" data-mod="map">
+      <button class="col-btn sel" data-zone="full" onclick="setColumn('map',2)">≡</button>
+      <button class="col-btn" data-zone="left" onclick="setColumn('map',0)">L</button>
+      <button class="col-btn" data-zone="right" onclick="setColumn('map',1)">R</button>
+      <button class="col-btn" data-zone="hidden" onclick="hideModule('map')" title="Hide">×</button>
     </div>
   </div>
   <div class="menu-item"><span class="label">📋 Log</span>
@@ -712,6 +730,7 @@ async function refreshSimpleLog() {
   try {
     const r = await fetch('/api/simplelog'); const d = await r.json();
     const events = d.events || [];
+    updateNodePositions(events);  // feed map
     const st = getFilterState();
     // Filter
     let filtered = events.filter(e => filterEvent(e));
@@ -900,7 +919,7 @@ function toggleMenu() {
 }
 
 // --- Drag & Drop layout ---
-const MODULES = ['wifi','status','radio','filter','log','fulllog','tx','firmware'];
+const MODULES = ['wifi','status','radio','filter','map','log','fulllog','tx','firmware'];
 const ZONES  = ['full','left','right'];
 let dragMod = null;
 
@@ -998,7 +1017,160 @@ document.addEventListener('drop', e => {
   dragMod = null;
 });
 
+// --- Map ---
+const nodePositions = new Map(); // key: name -> {lat, lon, name, type, seen}
+
+function parseLatLon(text) {
+  const latM = text.match(/lat=([\d.-]+)/);
+  const lonM = text.match(/lon=([\d.-]+)/);
+  const nameM = text.match(/name='([^']*)'/);
+  if (!latM || !lonM) return null;
+  return {
+    lat: parseFloat(latM[1]),
+    lon: parseFloat(lonM[1]),
+    name: nameM ? nameM[1] : '?'
+  };
+}
+
+function updateNodePositions(events) {
+  if (!events) return;
+  const now = Date.now();
+  for (const e of events) {
+    if (e.payload !== 'ADVERT') continue;
+    const pos = parseLatLon(e.text||'');
+    if (!pos) continue;
+    const key = pos.name !== '?' ? pos.name : (pos.lat.toFixed(4)+','+pos.lon.toFixed(4));
+    nodePositions.set(key, { ...pos, seen: now });
+  }
+  // Remove nodes not seen for 30 minutes
+  for (const [k, v] of nodePositions) {
+    if (now - v.seen > 1800000) nodePositions.delete(k);
+  }
+  drawMap();
+}
+
+// Canvas map state
+let mapCtx, mapCanvas, mapPanX = 0, mapPanY = 0, mapZoom = 2;
+let mapDragging = false, mapDragX, mapDragY, mapDragMx, mapDragMy;
+const tileCache = new Map();
+const TILE_SIZE = 256;
+
+function initMap() {
+  mapCanvas = $('mapCanvas');
+  if (!mapCanvas) return;
+  mapCtx = mapCanvas.getContext('2d');
+  // Center world initially
+  const initWorld = Math.pow(2, mapZoom) * TILE_SIZE;
+  mapPanX = initWorld/2 - mapCanvas.clientWidth/2;
+  mapPanY = initWorld/2 - mapCanvas.clientHeight/2;
+
+  function canvasPos(e) {
+    const r = mapCanvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+  mapCanvas.addEventListener('mousedown', e => {
+    const p = canvasPos(e);
+    mapDragging = true; mapDragX = mapPanX; mapDragY = mapPanY;
+    mapDragMx = p.x; mapDragMy = p.y;
+    mapCanvas.style.cursor = 'grabbing';
+  });
+  mapCanvas.addEventListener('mousemove', e => {
+    if (!mapDragging) return;
+    const p = canvasPos(e);
+    mapPanX = mapDragX - (p.x - mapDragMx);
+    mapPanY = mapDragY - (p.y - mapDragMy);
+    drawMap();
+  });
+  mapCanvas.addEventListener('mouseup', () => { mapDragging = false; mapCanvas.style.cursor = 'grab'; });
+  mapCanvas.addEventListener('mouseleave', () => { mapDragging = false; mapCanvas.style.cursor = 'grab'; });
+  mapCanvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    const p = canvasPos(e);
+    const oldZ = mapZoom;
+    const newZ = Math.max(2, Math.min(16, oldZ + (e.deltaY < 0 ? 1 : -1)));
+    if (oldZ === newZ) return;
+    const wx = p.x + mapPanX, wy = p.y + mapPanY;
+    const scale = Math.pow(2, newZ - oldZ);
+    mapPanX = wx * scale - p.x;
+    mapPanY = wy * scale - p.y;
+    mapZoom = newZ;
+    drawMap();
+  });
+}
+
+function lon2world(lon, z) { return (lon + 180) / 360 * Math.pow(2, z) * TILE_SIZE; }
+function lat2world(lat, z) {
+  const latRad = lat * Math.PI / 180;
+  return (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, z) * TILE_SIZE;
+}
+
+function loadTile(url) {
+  if (tileCache.has(url)) return Promise.resolve(tileCache.get(url));
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { tileCache.set(url, img); if (tileCache.size > 200) { const k = tileCache.keys().next().value; tileCache.delete(k); } resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+async function drawMap() {
+  if (!mapCanvas || !mapCtx) return;
+  const w = mapCanvas.width = mapCanvas.clientWidth;
+  const h = mapCanvas.height = mapCanvas.clientHeight;
+  const ctx = mapCtx;
+  const z = mapZoom;
+  const worldPx = Math.pow(2, z) * TILE_SIZE;
+
+  ctx.fillStyle = '#1a2a3a'; ctx.fillRect(0, 0, w, h);
+
+  // Visible tile range: canvas pixel -> world pixel -> tile index
+  const tx0 = Math.floor(mapPanX / TILE_SIZE);
+  const ty0 = Math.floor(mapPanY / TILE_SIZE);
+  const tx1 = Math.floor((mapPanX + w) / TILE_SIZE);
+  const ty1 = Math.floor((mapPanY + h) / TILE_SIZE);
+  const maxTile = Math.pow(2, z) - 1;
+
+  const promises = [];
+  for (let tx = Math.max(0, tx0); tx <= Math.min(maxTile, tx1); tx++) {
+    for (let ty = Math.max(0, ty0); ty <= Math.min(maxTile, ty1); ty++) {
+      const sx = tx * TILE_SIZE - mapPanX;
+      const sy = ty * TILE_SIZE - mapPanY;
+      const purl = `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
+      const p = loadTile(purl).then(img => {
+        if (img) ctx.drawImage(img, Math.round(sx), Math.round(sy), TILE_SIZE, TILE_SIZE);
+      });
+      promises.push(p);
+    }
+  }
+  await Promise.all(promises);
+
+  // Draw nodes
+  const nodes = [...nodePositions.values()];
+  $('mapInfo').textContent = nodes.length + ' node' + (nodes.length !== 1 ? 's' : '') + ' | zoom=' + z;
+
+  for (const n of nodes) {
+    const x = lon2world(n.lon, z) - mapPanX;
+    const y = lat2world(n.lat, z) - mapPanY;
+    if (x < -20 || x > w+20 || y < -20 || y > h+20) continue;
+
+    const r = Math.max(3, z-2);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fillStyle = '#ff4444'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    if (z >= 8) {
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+      ctx.font = 'bold 10px sans-serif';
+      ctx.strokeText(n.name, x + r + 3, y + 4);
+      ctx.fillText(n.name, x + r + 3, y + 4);
+    }
+  }
+}
+
 // --- Start ---
+initMap();
 loadLayout();
 loadFilterState();
 loadConfig();
