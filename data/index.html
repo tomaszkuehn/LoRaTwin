@@ -127,12 +127,9 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <span class="ver" id="fwVer">v-</span>
     </div>
   </div>
-  <div style="display:flex; align-items:center; gap:.8em;">
-    <a href="/update" class="btn" target="_blank">ElegantOTA →</a>
-    <button class="hamburger" id="hamburger" onclick="toggleMenu()" title="Menu">
-      <span></span><span></span><span></span>
-    </button>
-  </div>
+  <button class="hamburger" id="hamburger" onclick="toggleMenu()" title="Menu">
+    <span></span><span></span><span></span>
+  </button>
 </header>
 
 <!-- Konfiguracja WiFi -->
@@ -334,6 +331,11 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
     <div class="toggle on" id="tog-firmware"></div>
     <span class="label">📦 Firmware Update</span>
   </div>
+  <a href="/update" target="_blank" style="text-decoration:none;">
+    <div class="menu-item" style="border-bottom:none;">
+      <span class="label" style="color:var(--accent)">🔧 ElegantOTA →</span>
+    </div>
+  </a>
 </nav>
 
 <script>
