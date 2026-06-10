@@ -446,7 +446,7 @@ static void handleApiStatsMinutes(AsyncWebServerRequest* request) {
     String json;
     json.reserve(2048);
     json += F("{\"current\":");
-    json += statsPerMinute[statsMinuteIndex];
+    json += statsLiveCounter;
     json += F(",\"history\":[");
     for (int i = 0; i < STATS_MINUTE_SIZE; i++) {
         if (i > 0) json += ',';
@@ -457,7 +457,10 @@ static void handleApiStatsMinutes(AsyncWebServerRequest* request) {
     for (int i = 0; i < STATS_HOUR_SIZE; i++) {
         if (i > 0) json += ',';
         uint8_t idx = (statsHourIndex + 1 + i) % STATS_HOUR_SIZE;
-        json += statsPerHour[idx];
+        uint16_t val = statsPerHour[idx];
+        // Current hour slot includes live accumulator
+        if (idx == statsHourIndex) val = statsHourAccum + statsLiveCounter;
+        json += val;
     }
     json += F("]}");
     request->send(200, "application/json", json);

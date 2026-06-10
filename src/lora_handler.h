@@ -180,6 +180,8 @@ void simple_log_add(char type, uint8_t routeType, uint8_t payloadType,
 extern uint16_t statsPerMinute[STATS_MINUTE_SIZE];
 extern uint8_t  statsMinuteIndex;
 extern uint32_t statsCurrentMinuteStart;
+extern uint16_t statsLiveCounter;
+extern uint16_t statsHourAccum;     // akumulator godzinowy
 extern uint16_t statsPerHour[STATS_HOUR_SIZE];
 extern uint8_t  statsHourIndex;
 void stats_tick();  // call from loop() — rotates minute/hour if needed

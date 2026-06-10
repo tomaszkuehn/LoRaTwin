@@ -94,8 +94,8 @@ uint32_t statsCurrentMinuteStart = 0;
 uint16_t statsPerHour[STATS_HOUR_SIZE] = {0};
 uint8_t  statsHourIndex = 0;
 static uint32_t statsCurrentHourStart = 0;
-static uint16_t statsMinuteCounter = 0;
-static uint16_t statsHourAccum    = 0;
+uint16_t statsLiveCounter = 0;  // bieżący licznik minutowy
+uint16_t statsHourAccum    = 0;
 
 void stats_tick() {
     uint32_t now = millis();
@@ -106,11 +106,11 @@ void stats_tick() {
     }
     // Minute rotation
     if (now - statsCurrentMinuteStart >= 60000) {
-        statsPerMinute[statsMinuteIndex] = statsMinuteCounter;
-        statsHourAccum += statsMinuteCounter;
+        statsPerMinute[statsMinuteIndex] = statsLiveCounter;
+        statsHourAccum += statsLiveCounter;
         statsMinuteIndex = (statsMinuteIndex + 1) % STATS_MINUTE_SIZE;
         statsPerMinute[statsMinuteIndex] = 0;
-        statsMinuteCounter = 0;
+        statsLiveCounter = 0;
         statsCurrentMinuteStart = now;
     }
     // Hour rotation (3600s)
@@ -727,7 +727,7 @@ void lora_process() {
         lastSnr       = pkt.snr;
         lastFreqError = pkt.freqError;
         packetCount++;
-        statsMinuteCounter++;  // per-minute stats
+        statsLiveCounter++;  // per-minute stats
         currentRssi   = pkt.rssi;
 
         // Wrzuć do kolejki

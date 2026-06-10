@@ -1331,7 +1331,7 @@ function renderStats() {
     const rh = rxCanvas.height = rxCanvas.clientHeight;
     const rctx = rxCanvas.getContext('2d');
     rctx.fillStyle = '#0a0a14'; rctx.fillRect(0, 0, rw, rh);
-    const rxMax = Math.max(1, ...deviceHistory);
+    const rxMax = Math.max(1, ...deviceHistory, deviceCurrent);
     const padT = 4, padB = 22;
     const rxRight = 24;
     const rxBarW = Math.max(4, Math.floor((rw - rxRight) / 60));
@@ -1353,14 +1353,21 @@ function renderStats() {
       const x = (59 - m) * rxBarW + rxBarW/2;  // 0m at right
       rctx.fillText(m+'m', x, rh - 1);
     }
-    const lastIdx = deviceHistory.length - 1;
-    for (let i = 0; i < Math.min(60, Math.floor((rw - rxRight) / rxBarW)); i++) {
+    // History bars (cyan, indices 0..59)
+    const histCount = Math.min(60, Math.floor((rw - rxRight) / rxBarW) - 1);
+    for (let i = 0; i < histCount && i < 60; i++) {
       const val = deviceHistory[i] || 0;
       const barH = (val / rxMax) * rxChartH;
       const x = i * rxBarW;
-      const isCurrent = (i === lastIdx);
-      rctx.fillStyle = isCurrent ? '#00e676' : '#00d4ff';
+      rctx.fillStyle = '#00d4ff';
       rctx.fillRect(x + 1, padT + rxChartH - barH, rxBarW - 2, barH);
+    }
+    // Live bar (orange, grows each frame, resets per minute)
+    if (histCount > 0 && histCount < 61) {
+      const liveH = Math.max(2, (deviceCurrent / rxMax) * rxChartH);
+      const lx = histCount * rxBarW;
+      rctx.fillStyle = '#ffab40';
+      rctx.fillRect(lx + 1, padT + rxChartH - liveH, rxBarW - 2, liveH);
     }
   }
   $('statsInfo').textContent = 'device counter | '+deviceCurrent+' pkt/min';
