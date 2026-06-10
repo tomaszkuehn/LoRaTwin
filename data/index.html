@@ -388,6 +388,34 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 </div>
 </div>
 
+<!-- Statystyki -->
+<div id="sect-stats" class="module-card" data-module="stats">
+<h2 draggable="true">📊 Statystyki</h2>
+<div class="config-panel" style="padding:.5em 1em;">
+  <div style="display:flex; gap:1em; flex-wrap:wrap; margin-bottom:.4em; align-items:center;">
+    <div><span style="color:var(--text2);font-size:.75rem;">RX:</span> <b id="statRx" style="color:var(--accent);">0</b></div>
+    <div><span style="color:var(--text2);font-size:.75rem;">TX:</span> <b id="statTx" style="color:var(--green);">0</b></div>
+    <div><span style="color:var(--text2);font-size:.75rem;">ADVERT:</span> <b id="statAdv">0</b></div>
+    <div><span style="color:var(--text2);font-size:.75rem;">TXT_MSG:</span> <b id="statTxt">0</b></div>
+    <div><span style="color:var(--text2);font-size:.75rem;">Other:</span> <b id="statOther">0</b></div>
+    <div><span style="color:var(--text2);font-size:.75rem;">CRC:</span> <b id="statCrc" style="color:var(--red);">0</b></div>
+    <div style="border-left:1px solid #3a3a6a; padding-left:.8em;">
+      <span style="color:var(--text2);font-size:.7rem;">pkt/min</span>
+      <b id="statRate" style="color:var(--accent);font-size:1.1rem;">0</b>
+    </div>
+  </div>
+  <div style="display:flex; gap:3px; font-size:.65rem; color:var(--text2); margin-bottom:1px;">
+    <span style="flex:1; text-align:center;">per hour</span>
+    <span style="flex:2; text-align:center;">per minute</span>
+  </div>
+  <div style="display:flex; gap:3px;">
+    <canvas id="statsHourChart" style="flex:1; height:70px; background:#0a0a14; border-radius:4px;"></canvas>
+    <canvas id="statsRxChart" style="flex:2; height:70px; background:#0a0a14; border-radius:4px;"></canvas>
+  </div>
+  <div class="live-info" style="margin-top:.2em;" id="statsInfo">--</div>
+</div>
+</div>
+
 <!-- Nadawanie -->
 <div id="sect-tx" class="module-card" data-module="tx">
 <div class="module-grip" title="Drag to move">⋮⋮</div>
@@ -460,6 +488,14 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
       <button class="col-btn" data-zone="left" onclick="setColumn('filter',0)">L</button>
       <button class="col-btn" data-zone="right" onclick="setColumn('filter',1)">R</button>
       <button class="col-btn" data-zone="hidden" onclick="hideModule('filter')" title="Hide">×</button>
+    </div>
+  </div>
+  <div class="menu-item"><span class="label">📊 Statistics</span>
+    <div class="col-group" data-mod="stats">
+      <button class="col-btn sel" data-zone="full" onclick="setColumn('stats',2)">≡</button>
+      <button class="col-btn" data-zone="left" onclick="setColumn('stats',0)">L</button>
+      <button class="col-btn" data-zone="right" onclick="setColumn('stats',1)">R</button>
+      <button class="col-btn" data-zone="hidden" onclick="hideModule('stats')" title="Hide">×</button>
     </div>
   </div>
   <div class="menu-item"><span class="label">🗺 Nodes Map</span>
@@ -537,6 +573,7 @@ async function refreshStatus() {
     $('loraLabel').textContent = d.lora_freq_mhz.toFixed(3)+' MHz';
     $('loraParams').textContent = 'SF'+d.lora_sf+' / BW'+d.lora_bw_khz.toFixed(0)+' / CR4/'+d.lora_cr;
     $('freqErr').textContent = 'Live RSSI: '+d.current_rssi.toFixed(0)+' dBm  |  FreqErr: '+d.freq_error_hz.toFixed(1)+' Hz';
+    if (d.crc_fails !== undefined) $('statCrc').textContent = d.crc_fails;
     $('fwVer').textContent = 'v'+d.firmware;
     $('fwFooter').textContent = d.firmware;
     $('statusDot').className = 'dot'+(d.wifi_connected?'':' offline');
@@ -752,6 +789,7 @@ async function refreshSimpleLog() {
     const r = await fetch('/api/simplelog'); const d = await r.json();
     const events = d.events || [];
     updateNodePositions(events);  // feed map
+    updateStats(events);           // feed cumulative counters
     // Track last TX time — only update if newer than previous
     let latestTxDev = 0;
     for (const e of events) {
@@ -949,7 +987,7 @@ function toggleMenu() {
 }
 
 // --- Drag & Drop layout ---
-const MODULES = ['wifi','status','radio','filter','map','log','fulllog','tx','firmware'];
+const MODULES = ['wifi','status','radio','filter','stats','map','log','fulllog','tx','firmware'];
 const ZONES  = ['full','left','right'];
 let dragMod = null;
 
@@ -965,6 +1003,13 @@ function moveModule(mod, zone) {
   }
   updateSidebarButtons();
   saveLayout();
+  // Redraw canvases after DOM reflow
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      drawMap();
+      renderStats();
+    });
+  });
 }
 
 // Sidebar button click -> move module
@@ -1200,6 +1245,127 @@ async function drawMap() {
   }
 }
 
+// --- Stats ---
+let statsCounts = { rx:0, tx:0, advert:0, txt:0, other:0, crc:0 };
+const _seenKeys = new Set();
+let deviceHistory = new Array(60).fill(0);
+let deviceHours   = new Array(24).fill(0);
+let deviceCurrent = 0;
+
+function updateStats(events) {
+  if (!events) return;
+  for (const e of events) {
+    const key = e.t + '|' + e.type + '|' + (e.text||'').slice(0,30);
+    if (_seenKeys.has(key)) continue;
+    _seenKeys.add(key);
+    if (e.type === 'R') statsCounts.rx++;
+    else if (e.type === 'T') statsCounts.tx++;
+    if (e.payload === 'ADVERT') statsCounts.advert++;
+    else if (e.payload === 'TXT_MSG') statsCounts.txt++;
+    else if (e.type === 'R') statsCounts.other++;
+  }
+  if (_seenKeys.size > 1000) _seenKeys.clear();
+}
+
+async function refreshDeviceStats() {
+  try {
+    const r = await fetch('/api/stats/minutes'); const d = await r.json();
+    deviceCurrent = d.current || 0;
+    deviceHistory = d.history || new Array(60).fill(0);
+    deviceHours   = d.hours   || new Array(24).fill(0);
+    renderStats();
+  } catch(e) {}
+}
+
+function renderStats() {
+  $('statRx').textContent = statsCounts.rx;
+  $('statTx').textContent = statsCounts.tx;
+  $('statAdv').textContent = statsCounts.advert;
+  $('statTxt').textContent = statsCounts.txt;
+  $('statOther').textContent = statsCounts.other;
+  $('statRate').textContent = deviceCurrent;
+
+  // Hourly chart (left)
+  const hCanvas = $('statsHourChart');
+  if (hCanvas) {
+    hCanvas.width = 0; hCanvas.height = 0;
+    const hw = hCanvas.width = hCanvas.clientWidth;
+    const hh = hCanvas.height = hCanvas.clientHeight;
+    const hctx = hCanvas.getContext('2d');
+    hctx.fillStyle = '#0a0a14'; hctx.fillRect(0, 0, hw, hh);
+    const hMax = Math.max(1, ...deviceHours);
+    const padT = 4, padB = 22;
+    const hBarW = Math.max(2, Math.floor((hw - 35) / 24));
+    const hChartH = hh - padT - padB;
+    // Grid + Y scale
+    hctx.strokeStyle = '#1a1a3a'; hctx.lineWidth = 0.5;
+    // Y scale
+    hctx.fillStyle = '#888'; hctx.font = '9px sans-serif'; hctx.textAlign = 'right';
+    const hRightMargin = 24;
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (hChartH) * i / 4;
+      hctx.beginPath(); hctx.moveTo(0, y); hctx.lineTo(hw - hRightMargin, y); hctx.stroke();
+      const v = Math.round(hMax * (4 - i) / 4);
+      hctx.fillText(v, hw - 2, y + 3);
+    }
+    // X labels every 6 hours (right = most recent)
+    hctx.fillStyle = '#888'; hctx.font = '11px sans-serif'; hctx.textAlign = 'center';
+    for (let h = 0; h < 24; h += 6) {
+      const x = (23 - h) * hBarW + hBarW/2;  // 0h at right
+      hctx.fillText(h+'h', x, hh - 1);
+    }
+    // Bars
+    for (let i = 0; i < Math.min(24, Math.floor((hw - hRightMargin) / hBarW)); i++) {
+      const val = deviceHours[i] || 0;
+      const barH = (val / hMax) * hChartH;
+      hctx.fillStyle = '#ffab4066';
+      hctx.fillRect(i * hBarW + 1, padT + hChartH - barH, hBarW - 1, barH);
+    }
+  }
+
+  // Minute chart (right)
+  const rxCanvas = $('statsRxChart');
+  if (rxCanvas) {
+    rxCanvas.width = 0; rxCanvas.height = 0;
+    const rw = rxCanvas.width = rxCanvas.clientWidth;
+    const rh = rxCanvas.height = rxCanvas.clientHeight;
+    const rctx = rxCanvas.getContext('2d');
+    rctx.fillStyle = '#0a0a14'; rctx.fillRect(0, 0, rw, rh);
+    const rxMax = Math.max(1, ...deviceHistory);
+    const padT = 4, padB = 22;
+    const rxRight = 24;
+    const rxBarW = Math.max(4, Math.floor((rw - rxRight) / 60));
+    const rxChartH = rh - padT - padB;
+    rctx.strokeStyle = '#2a2a4a'; rctx.lineWidth = 1;
+    rctx.beginPath(); rctx.moveTo(0, padT + rxChartH); rctx.lineTo(rw - rxRight, padT + rxChartH); rctx.stroke();
+    // Grid + Y scale
+    rctx.strokeStyle = '#1a1a3a'; rctx.lineWidth = 0.5;
+    rctx.fillStyle = '#888'; rctx.font = '9px sans-serif'; rctx.textAlign = 'right';
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + (rxChartH) * i / 4;
+      rctx.beginPath(); rctx.moveTo(0, y); rctx.lineTo(rw - rxRight, y); rctx.stroke();
+      const v = Math.round(rxMax * (4 - i) / 4);
+      rctx.fillText(v, rw - 2, y + 3);
+    }
+    // X labels every 10 min (right = most recent)
+    rctx.fillStyle = '#888'; rctx.font = '11px sans-serif'; rctx.textAlign = 'center';
+    for (let m = 0; m < 60; m += 10) {
+      const x = (59 - m) * rxBarW + rxBarW/2;  // 0m at right
+      rctx.fillText(m+'m', x, rh - 1);
+    }
+    const lastIdx = deviceHistory.length - 1;
+    for (let i = 0; i < Math.min(60, Math.floor((rw - rxRight) / rxBarW)); i++) {
+      const val = deviceHistory[i] || 0;
+      const barH = (val / rxMax) * rxChartH;
+      const x = i * rxBarW;
+      const isCurrent = (i === lastIdx);
+      rctx.fillStyle = isCurrent ? '#00e676' : '#00d4ff';
+      rctx.fillRect(x + 1, padT + rxChartH - barH, rxBarW - 2, barH);
+    }
+  }
+  $('statsInfo').textContent = 'device counter | '+deviceCurrent+' pkt/min';
+}
+
 // --- Start ---
 initMap();
 loadLayout();
@@ -1207,10 +1373,12 @@ loadFilterState();
 loadConfig();
 loadWifiConfig();
 refreshStatus();
+refreshDeviceStats();
 refreshSimpleLog();
 refreshLog();
 setInterval(refreshStatus, 2000);
 setInterval(updateLastTx, 2000);
+setInterval(refreshDeviceStats, 5000);
 setInterval(refreshSimpleLog, 5000);
 setInterval(refreshLog, 30000);
 setInterval(loadWifiConfig, 30000);

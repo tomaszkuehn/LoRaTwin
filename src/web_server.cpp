@@ -82,6 +82,7 @@ static void handleApiStatus(AsyncWebServerRequest* request) {
     doc["last_rssi"]    = lastRssi;
     doc["last_snr"]     = lastSnr;
     doc["freq_error_hz"]= lastFreqError;
+    doc["crc_fails"]    = crcFailCount;
 
     String json;
     serializeJson(doc, json);
@@ -440,6 +441,28 @@ static void handleApiLogSimple(AsyncWebServerRequest* request) {
     request->send(200, "application/json", json);
 }
 
+// ––– GET /api/stats/minutes — per-minute + per-hour packet counts –––
+static void handleApiStatsMinutes(AsyncWebServerRequest* request) {
+    String json;
+    json.reserve(2048);
+    json += F("{\"current\":");
+    json += statsPerMinute[statsMinuteIndex];
+    json += F(",\"history\":[");
+    for (int i = 0; i < STATS_MINUTE_SIZE; i++) {
+        if (i > 0) json += ',';
+        uint8_t idx = (statsMinuteIndex + 1 + i) % STATS_MINUTE_SIZE;
+        json += statsPerMinute[idx];
+    }
+    json += F("],\"hours\":[");
+    for (int i = 0; i < STATS_HOUR_SIZE; i++) {
+        if (i > 0) json += ',';
+        uint8_t idx = (statsHourIndex + 1 + i) % STATS_HOUR_SIZE;
+        json += statsPerHour[idx];
+    }
+    json += F("]}");
+    request->send(200, "application/json", json);
+}
+
 // ––– POST /api/tx — wyślij ramkę LoRa –––
 static void handleApiTx(AsyncWebServerRequest* request) {
     if (!request->hasParam("data", true)) {
@@ -545,6 +568,7 @@ void web_server_init() {
     server.on("/api/wifi",    HTTP_POST, handleApiWifiPost);
     server.on("/api/tx",      HTTP_POST, handleApiTx);
     server.on("/api/simplelog", HTTP_GET,  handleApiLogSimple);
+    server.on("/api/stats/minutes", HTTP_GET, handleApiStatsMinutes);
     server.on("/api/log",     HTTP_GET,  handleApiLog);
     server.onNotFound(handleNotFound);
 

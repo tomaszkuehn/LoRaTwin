@@ -91,6 +91,9 @@ void loop() {
         digitalWrite(PIN_LED, lora_has_rx() ? HIGH : LOW);
     }
 
+    // Statystyki per-minute
+    stats_tick();
+
     // Odświeżenie wyświetlacza OLED (ratelimit ~10 Hz)
     display_render();
 }

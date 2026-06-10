@@ -86,6 +86,43 @@ SimpleLogEntry simpleLogBuffer[SIMPLE_LOG_CAPACITY];
 volatile int   simpleLogHead  = -1;
 int            simpleLogCount = 0;
 
+// ––– Statystyki per-minute –––
+uint16_t statsPerMinute[STATS_MINUTE_SIZE] = {0};
+uint8_t  statsMinuteIndex = 0;
+uint32_t statsCurrentMinuteStart = 0;
+
+uint16_t statsPerHour[STATS_HOUR_SIZE] = {0};
+uint8_t  statsHourIndex = 0;
+static uint32_t statsCurrentHourStart = 0;
+static uint16_t statsMinuteCounter = 0;
+static uint16_t statsHourAccum    = 0;
+
+void stats_tick() {
+    uint32_t now = millis();
+    if (statsCurrentMinuteStart == 0) {
+        statsCurrentMinuteStart = now;
+        statsCurrentHourStart   = now;
+        return;
+    }
+    // Minute rotation
+    if (now - statsCurrentMinuteStart >= 60000) {
+        statsPerMinute[statsMinuteIndex] = statsMinuteCounter;
+        statsHourAccum += statsMinuteCounter;
+        statsMinuteIndex = (statsMinuteIndex + 1) % STATS_MINUTE_SIZE;
+        statsPerMinute[statsMinuteIndex] = 0;
+        statsMinuteCounter = 0;
+        statsCurrentMinuteStart = now;
+    }
+    // Hour rotation (3600s)
+    if (now - statsCurrentHourStart >= 3600000) {
+        statsPerHour[statsHourIndex] = statsHourAccum;
+        statsHourIndex = (statsHourIndex + 1) % STATS_HOUR_SIZE;
+        statsPerHour[statsHourIndex] = 0;
+        statsHourAccum = 0;
+        statsCurrentHourStart = now;
+    }
+}
+
 void simple_log_add(char type, uint8_t routeType, uint8_t payloadType,
                     uint8_t hopCount, float rssi, float snr, const char* text) {
     int idx = (simpleLogHead + 1) % SIMPLE_LOG_CAPACITY;
@@ -690,6 +727,7 @@ void lora_process() {
         lastSnr       = pkt.snr;
         lastFreqError = pkt.freqError;
         packetCount++;
+        statsMinuteCounter++;  // per-minute stats
         currentRssi   = pkt.rssi;
 
         // Wrzuć do kolejki

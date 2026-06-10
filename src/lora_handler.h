@@ -174,5 +174,15 @@ extern int            simpleLogCount;
 void simple_log_add(char type, uint8_t routeType, uint8_t payloadType,
                     uint8_t hopCount, float rssi, float snr, const char* text);
 
+// ––– Statystyki per-minute –––
+#define STATS_MINUTE_SIZE 60
+#define STATS_HOUR_SIZE   24
+extern uint16_t statsPerMinute[STATS_MINUTE_SIZE];
+extern uint8_t  statsMinuteIndex;
+extern uint32_t statsCurrentMinuteStart;
+extern uint16_t statsPerHour[STATS_HOUR_SIZE];
+extern uint8_t  statsHourIndex;
+void stats_tick();  // call from loop() — rotates minute/hour if needed
+
 // ––– Klasyfikator ramek –––
 ProtoType classify_protocol(const uint8_t* data, uint8_t len);
