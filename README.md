@@ -5,6 +5,9 @@ receives and transmits LoRa frames compatible with both **MeshCore** and
 **Meshtastic** networks.  Includes a web dashboard with live status, event log,
 configuration panel, and OTA firmware update.
 
+<img width="981" height="1257" alt="image" src="https://github.com/user-attachments/assets/2c2a0b70-636c-41a4-9d6f-247dc000f010" />
+
+
 ## Features
 
 - **Dual radio profile** — switch between MeshCore (`sync 0x12`, SF8 / BW 62.5 kHz)
