@@ -15,7 +15,7 @@ static AsyncWebServer server(80);
 static void handleApiWifiGet(AsyncWebServerRequest* request) {
     String json;
     wifi_get_status_json(json);
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– POST /api/wifi — zapisz konfigurację WiFi i przełącz tryb –––
@@ -56,7 +56,7 @@ static void handleApiWifiPost(AsyncWebServerRequest* request) {
 
     String json;
     serializeJson(doc, json);
-    request->send(ok ? 200 : 500, "application/json", json);
+    request->send(ok ? 200 : 500, "application/json; charset=utf-8", json);
 }
 
 // ––– GET /api/status — JSON ze stanem urządzenia –––
@@ -87,7 +87,7 @@ static void handleApiStatus(AsyncWebServerRequest* request) {
     String json;
     serializeJson(doc, json);
 
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– GET /api/config — pobierz konfigurację radia –––
@@ -107,7 +107,7 @@ static void handleApiConfigGet(AsyncWebServerRequest* request) {
 
     String json;
     serializeJson(doc, json);
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– POST /api/config — zapisz konfigurację radia –––
@@ -179,7 +179,7 @@ static void handleApiConfigPost(AsyncWebServerRequest* request) {
 
     String json;
     serializeJson(doc, json);
-    request->send(ok ? 200 : 500, "application/json", json);
+    request->send(ok ? 200 : 500, "application/json; charset=utf-8", json);
 }
 
 // ––– JSON helper: append escaped string –––
@@ -378,7 +378,7 @@ static void handleApiLog(AsyncWebServerRequest* request) {
         }
     }
     json += F("]}");
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– GET /api/log/simple — uproszczony log (max 50 ostatnich wpisów) –––
@@ -438,7 +438,7 @@ static void handleApiLogSimple(AsyncWebServerRequest* request) {
         }
     }
     json += F("]}");
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– GET /api/stats/minutes — per-minute + per-hour packet counts –––
@@ -463,7 +463,7 @@ static void handleApiStatsMinutes(AsyncWebServerRequest* request) {
         json += val;
     }
     json += F("]}");
-    request->send(200, "application/json", json);
+    request->send(200, "application/json; charset=utf-8", json);
 }
 
 // ––– POST /api/tx — wyślij ramkę LoRa –––
@@ -487,26 +487,27 @@ static void handleApiTx(AsyncWebServerRequest* request) {
 
     String json;
     serializeJson(doc, json);
-    request->send(ok ? 200 : 500, "application/json", json);
+    request->send(ok ? 200 : 500, "application/json; charset=utf-8", json);
 }
 
 // ––– GET / — strona główna (dashboard) –––
 static void handleRoot(AsyncWebServerRequest* request) {
     // Serwuj index.html z LittleFS, jeśli istnieje
     if (LittleFS.exists("/index.html")) {
-        request->send(LittleFS, "/index.html", "text/html");
+        request->send(LittleFS, "/index.html", "text/html; charset=utf-8");
     } else {
         // Fallback: prosta strona HTML inline
-        request->send(200, "text/html", R"rawliteral(
+        request->send(200, "text/html; charset=utf-8", R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Heltec LoRa RX - No LittleFS</title>
     <style>
+        html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
         body { font-family: sans-serif; background: #1a1a2e; color: #e0e0e0;
-               max-width: 600px; margin: 2em auto; padding: 1em; }
+               max-width: 600px; margin: 2em auto; padding: 1em; min-height:100dvh; }
         h1 { color: #00d4ff; }
         .warn { background: #332200; border: 1px solid #ffaa00; padding: 1em; border-radius: 8px; }
         a { color: #00d4ff; }
@@ -578,6 +579,7 @@ void web_server_init() {
     // CORS — pozwól na zapytania z dowolnego źródła (przydatne podczas dev)
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Content-Type");
+    DefaultHeaders::Instance().addHeader("Cache-Control", "no-store, max-age=0");
 
     // ElegantOTA — dostępny pod /update
     ElegantOTA.begin(&server);

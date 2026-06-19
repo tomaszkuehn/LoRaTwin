@@ -6,6 +6,7 @@ void display_init();
 void display_show_splash();
 void display_render();
 void display_show_error(const char* msg);
+void display_show_wifi_reset();
 
 // ––– Tryby wyświetlania –––
 enum DisplayMode : uint8_t {

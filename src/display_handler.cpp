@@ -11,6 +11,7 @@
 static DisplayMode dispMode = DISP_SPLASH;
 static uint32_t     lastRenderMs = 0;
 static uint32_t     splashEndMs  = 0;
+static uint32_t     wifiResetEndMs = 0;   // timeout powrotu po komunikacie resetu WiFi
 
 
 // ––– Konstruktor U8g2 –––
@@ -83,6 +84,12 @@ void display_render() {
         } else {
             return;   // <-- splash wciąż trwa, nie nadpisuj
         }
+    }
+
+    // Po komunikacie resetu WiFi — wróć do normalnego trybu po 3s
+    if (dispMode == DISP_ERROR && wifiResetEndMs > 0 && now > wifiResetEndMs) {
+        dispMode = DISP_IDLE;
+        wifiResetEndMs = 0;
     }
 
     // Sprawdź, czy czeka nowy pakiet w kolejce
@@ -218,5 +225,27 @@ void display_show_error(const char* msg) {
     }
 
     u8g2.drawStr(0, 63, "Reset the device...");
+    u8g2.sendBuffer();
+}
+
+// ––– Komunikat resetu WiFi (długie naciśnięcie PRG) –––
+void display_show_wifi_reset() {
+    dispMode = DISP_ERROR;   // użyj trybu błędu aby zablokować normalne renderowanie
+    wifiResetEndMs = millis() + 3000;  // po 3s wróć do normalnego wyświetlania
+
+    u8g2.clearBuffer();
+
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawStr(18, 18, "WiFi RESET");
+
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.setCursor(10, 36);
+    u8g2.print(F("AP: LoRaTwin"));
+    u8g2.setCursor(10, 48);
+    u8g2.print(F("IP: 192.168.4.1"));
+
+    u8g2.setCursor(10, 63);
+    u8g2.print(F("Rebooting WiFi..."));
+
     u8g2.sendBuffer();
 }

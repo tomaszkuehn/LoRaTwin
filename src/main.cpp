@@ -22,6 +22,12 @@
 static void setup_serial();
 static void setup_power();
 static void setup_led();
+static void setup_button();
+
+// ––– Stan przycisku PRG (długie naciśnięcie = reset WiFi) –––
+static uint32_t buttonPressedMs = 0;
+static bool     buttonWasPressed = false;
+static bool     resetTriggered = false;
 // ====================================================================
 
 void setup() {
@@ -33,6 +39,9 @@ void setup() {
 
     // 3. Konfiguracja LED
     setup_led();
+
+    // 3b. Konfiguracja przycisku PRG
+    setup_button();
 
     // 4. Wyświetlacz OLED
     display_init();
@@ -75,6 +84,30 @@ void setup() {
 }
 
 void loop() {
+    // ––– Przycisk PRG: długie naciśnięcie (>3s) = reset WiFi do AP:LoRaTwin –––
+    {
+        bool buttonPressed = (digitalRead(PIN_BUTTON) == LOW);
+        uint32_t now = millis();
+
+        if (buttonPressed && !buttonWasPressed) {
+            buttonPressedMs = now;
+        }
+
+        if (buttonPressed && (now - buttonPressedMs > 3000) && !resetTriggered) {
+            resetTriggered = true;
+            Serial.println(F("[Btn] Długie naciśnięcie PRG (>3s) — reset WiFi do AP:LoRaTwin"));
+            display_show_wifi_reset();
+            wifi_reset_to_defaults();
+            // Daj chwilę na wyświetlenie komunikatu, potem wznów normalne renderowanie
+        }
+
+        if (!buttonPressed) {
+            resetTriggered = false;
+        }
+
+        buttonWasPressed = buttonPressed;
+    }
+
     // ElegantOTA — obsługa uploadu firmware (musi być w loop)
     ElegantOTA.loop();
 
@@ -115,4 +148,9 @@ static void setup_power() {
 static void setup_led() {
     pinMode(PIN_LED, OUTPUT);
     digitalWrite(PIN_LED, LOW);     // LED domyślnie wyłączony
+}
+
+static void setup_button() {
+    pinMode(PIN_BUTTON, INPUT_PULLUP);
+    Serial.println(F("[Btn] Przycisk PRG gotowy (długie naciśnięcie >3s = reset WiFi)."));
 }

@@ -2,16 +2,17 @@
 <html lang="pl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>LoRaTwin</title>
 <style>
+html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
 :root {
   --bg:#0f0f1a; --card:#1a1a2e; --card2:#16213e; --accent:#00d4ff;
   --green:#00e676; --yellow:#ffab40; --red:#ff5252; --text:#c8c8dc; --text2:#8888a0;
   --radius:10px;
 }
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+body { font-family:'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; min-height:100dvh; }
 h1 { font-size:1.3rem; font-weight:600; }
 h2 { font-size:1rem; font-weight:600; color:var(--accent); margin-bottom:.6em; cursor:grab; user-select:none; }
 h2:active { cursor:grabbing; }
@@ -65,7 +66,7 @@ header .ver { color:var(--text2); font-size:.85rem; }
 .config-panel .field { display:flex; flex-direction:column; gap:.3em; }
 .config-panel label { font-size:.72rem; text-transform:uppercase; color:var(--text2); letter-spacing:.5px; }
 .config-panel select, .config-panel input { background:#0f0f1a; color:var(--text); border:1px solid #3a3a6a;
-    border-radius:6px; padding:.45em .7em; font-size:.85rem; min-width:120px; }
+    border-radius:6px; padding:.45em .7em; font-size:16px; min-width:120px; }
 .config-panel select:focus, .config-panel input:focus { outline:none; border-color:var(--accent); }
 .config-panel .live-info { font-size:.78rem; color:var(--text2); margin-top:.4em; }
 
@@ -112,7 +113,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
            opacity:0; pointer-events:none; transition:opacity .25s; }
 .overlay.open { opacity:1; pointer-events:auto; }
 
-.sidebar { position:fixed; top:0; right:-320px; width:300px; height:100%; z-index:999;
+.sidebar { position:fixed; top:0; right:-320px; width:300px; height:100%; height:100dvh; z-index:999;
            background:var(--card); border-left:1px solid #2a2a4a; padding:1.2em;
            transition:right .25s; overflow-y:auto; }
 .sidebar.open { right:0; }
@@ -132,7 +133,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 .collapsible.hidden { max-height:0 !important; opacity:0; margin-top:0 !important;
                       margin-bottom:0 !important; padding-top:0; padding-bottom:0; border:none; }
 
-/* -- Log module: container queries for responsive font size -- */
+/* -- Log module: responsive font size (container queries + media fallback) -- */
 #sect-log { container-type:inline-size; }
 #sect-log table { font-size:.75rem; }
 @container (max-width:550px) {
@@ -141,6 +142,13 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 }
 @container (max-width:400px) {
   #sect-log table { font-size:.5rem; }
+}
+/* Fallback for browsers without container queries */
+@media (max-width:600px) {
+  #sect-log table { font-size:.65rem; }
+}
+@media (max-width:420px) {
+  #sect-log table { font-size:.55rem; }
 }
 
 /* -- Filter buttons -- */
@@ -383,7 +391,7 @@ footer { text-align:center; padding:1em; color:var(--text2); font-size:.7rem;
 <div class="module-grip" title="Drag to move">⋮⋮</div>
 <h2 draggable="true">🗺 Nodes Map</h2>
 <div class="config-panel" style="padding:.3em;">
-  <canvas id="mapCanvas" style="width:100%; height:300px; background:#0a0a14; border-radius:6px; cursor:grab;"></canvas>
+  <canvas id="mapCanvas" style="width:100%; height:300px; background:#0a0a14; border-radius:6px; cursor:grab; touch-action:none;"></canvas>
   <div class="live-info" style="margin-top:.3em;" id="mapInfo">0 nodes</div>
 </div>
 </div>
@@ -1263,11 +1271,14 @@ function lat2world(lat, z) {
 
 function loadTile(url) {
   if (tileCache.has(url)) return Promise.resolve(tileCache.get(url));
+  // Don't even try to fetch tiles when offline (device AP mode = no internet)
+  if (!navigator.onLine) return Promise.resolve(null);
   return new Promise(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => { tileCache.set(url, img); if (tileCache.size > 200) { const k = tileCache.keys().next().value; tileCache.delete(k); } resolve(img); };
-    img.onerror = () => resolve(null);
+    const timer = setTimeout(() => { resolve(null); }, 4000);  // timeout after 4s
+    img.onload = () => { clearTimeout(timer); tileCache.set(url, img); if (tileCache.size > 200) { const k = tileCache.keys().next().value; tileCache.delete(k); } resolve(img); };
+    img.onerror = () => { clearTimeout(timer); resolve(null); };
     img.src = url;
   });
 }
@@ -1293,19 +1304,30 @@ async function drawMap() {
   const maxTile = Math.pow(2, z) - 1;
   const drawSz = Math.ceil(TILE_SIZE * tileScale) + 1;  // +1px bleed prevents gaps
 
+  let tileFailures = 0;
   const promises = [];
   for (let tx = Math.max(0, tx0); tx <= Math.min(maxTile, tx1); tx++) {
     for (let ty = Math.max(0, ty0); ty <= Math.min(maxTile, ty1); ty++) {
+      if (tileFailures >= 3) break;  // circuit breaker: too many failures → skip
       const sx = tx * TILE_SIZE * tileScale - mapPanX;
       const sy = ty * TILE_SIZE * tileScale - mapPanY;
       const purl = `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
       const p = loadTile(purl).then(img => {
         if (img) ctx.drawImage(img, Math.floor(sx), Math.floor(sy), drawSz, drawSz);
+        else tileFailures++;
       });
       promises.push(p);
     }
   }
   await Promise.all(promises);
+
+  // If all tiles failed, draw offline indicator
+  if (tileFailures >= 3 || (!navigator.onLine && tileCache.size === 0)) {
+    ctx.fillStyle = '#1a2a3a'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#888'; ctx.font = '14px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('🗺 Map offline — no internet', w/2, h/2);
+    ctx.textAlign = 'start';
+  }
 
   // Draw nodes
   const nodes = [...nodePositions.values()];

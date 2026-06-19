@@ -24,3 +24,4 @@ String      wifi_status_str();
 bool        wifi_save_config(WifiMode mode, const char* ssid, const char* pass);
 void        wifi_get_config(WifiConfig& cfg);      // odczytaj aktualną konfigurację
 void        wifi_get_status_json(String& json);    // {"mode":"sta","ssid":"...","ip":"...","rssi":-67}
+void        wifi_reset_to_defaults();              // reset do AP:LoRaTwin (długie naciśnięcie PRG)

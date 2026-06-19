@@ -170,16 +170,88 @@ bool wifi_save_config(WifiMode mode, const char* ssid, const char* pass) {
                   mode == WM_STA ? "STA" : "AP",
                   ssid);
 
-    // Restart WiFi z nowymi ustawieniami
-    WiFi.disconnect(true);
-    delay(500);
-    wifi_init();
+    // Płynne przełączenie trybu WiFi — bez wyłączania radia,
+    // bez utraty stosu TCP/IP. Serwer WWW pozostaje dostępny.
+    if (mode == WM_AP) {
+        // STA → AP: rozłącz STA (nie wyłączaj radia), uruchom AP
+        WiFi.disconnect(false);
+        delay(100);
+        WiFi.mode(WIFI_MODE_AP);
+        if (!WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET)) {
+            Serial.println(F("[WiFi] OSTRZEŻENIE: nie udało się ustawić IP AP"));
+        }
+        if (!WiFi.softAP(AP_SSID, AP_PASS)) {
+            Serial.println(F("[WiFi] BŁĄD: nie udało się utworzyć AP!"));
+            wifiActive = false;
+            return false;
+        }
+        delay(200);
+        WiFi.setSleep(false);
+        wifiActive = true;
+        Serial.printf("[WiFi] Przełączono na AP: %s | IP: %s\n",
+                      AP_SSID, WiFi.softAPIP().toString().c_str());
+    } else {
+        // AP → STA: wyłącz AP, uruchom klienta (bez blokowania — łączenie w tle)
+        WiFi.softAPdisconnect(false);
+        delay(100);
+        WiFi.mode(WIFI_MODE_STA);
+        WiFi.setHostname("heltec-lora-rx");
+        if (strlen(g_wifiCfg.pass) > 0) {
+            WiFi.begin(g_wifiCfg.ssid, g_wifiCfg.pass);
+        } else {
+            WiFi.begin(g_wifiCfg.ssid);
+        }
+        wifiActive = true;
+        wifiReconnectMs = millis();
+        Serial.printf("[WiFi] Przełączono na STA: łączę do %s (w tle)...\n", g_wifiCfg.ssid);
+    }
 
     return true;
 }
 
 void wifi_get_config(WifiConfig& cfg) {
     cfg = g_wifiCfg;
+}
+
+void wifi_reset_to_defaults() {
+    Serial.println(F("[WiFi] Reset do ustawień domyślnych (AP:LoRaTwin)..."));
+
+    // Wyczyść NVS — usuń całą przestrzeń nazw "wifi"
+    Preferences prefs;
+    prefs.begin(NVS_NS, false);
+    prefs.clear();
+    prefs.end();
+
+    // Przywróć domyślną konfigurację AP w RAM
+    g_wifiCfg.mode = WM_AP;
+    strncpy(g_wifiCfg.ssid, AP_SSID, 32);
+    g_wifiCfg.ssid[32] = '\0';
+    strncpy(g_wifiCfg.pass, AP_PASS, 64);
+    g_wifiCfg.pass[64] = '\0';
+
+    // Rozłącz obecne WiFi i zresetuj kontroler
+    WiFi.disconnect(true);
+    delay(500);
+
+    // Restart w trybie AP
+    WiFi.mode(WIFI_MODE_AP);
+
+    if (!WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET)) {
+        Serial.println(F("[WiFi] OSTRZEŻENIE: nie udało się ustawić IP AP (używam domyślnego)."));
+    }
+
+    if (!WiFi.softAP(AP_SSID, AP_PASS)) {
+        Serial.println(F("[WiFi] BŁĄD: nie udało się utworzyć AP!"));
+        wifiActive = false;
+        return;
+    }
+
+    delay(200);
+    WiFi.setSleep(false);
+    wifiActive = true;
+
+    Serial.printf("[WiFi] AP gotowy (po resecie): %s | IP: %s\n",
+                  AP_SSID, WiFi.softAPIP().toString().c_str());
 }
 
 void wifi_get_status_json(String& json) {
