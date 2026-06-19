@@ -35,7 +35,7 @@ static uint8_t* pb_write_bytes_field(uint8_t* buf, uint8_t fieldNum, const uint8
 }
 
 // ––– Obiekty globalne –––
-PacketRing<LoraPacket, 64> packetQueue;  // zwiększono z 16 na 64
+PacketRing<LoraPacket, 256> packetQueue;  // 256 ramek (~70 KB RAM)
 volatile bool              packetReceived = false;
 uint32_t                   packetCount    = 0;
 uint32_t                   crcFailCount   = 0;
@@ -269,6 +269,38 @@ bool decode_meshcore(const uint8_t* data, uint8_t len, MeshCoreInfo& info) {
 
     info.payloadOffset = offset;
     return true;
+}
+
+// ––– Priorytet ramki (do inteligentnego usuwania z kolejki) –––
+// 0 = najniższy (sterujące/nieznane — usuwane jako pierwsze)
+// 1 = średni   (REPEATER bez pozycji — usuwany gdy brak 0)
+// 2 = wysoki   (pozycja lub tekst — zostaje jak najdłużej)
+static int packet_priority(const LoraPacket& pkt) {
+    ProtoType proto = classify_protocol(pkt.data, pkt.len);
+    if (proto != PROTO_MESHCORE) return 0;  // nieznany protokół
+
+    MeshCoreInfo mc;
+    if (!decode_meshcore(pkt.data, pkt.len, mc)) return 0;
+
+    // ADVERT (0x04)
+    if (mc.payloadType == 0x04) {
+        if (pkt.len > mc.payloadOffset + 100) {
+            const uint8_t* ap = pkt.data + mc.payloadOffset + 100;
+            uint8_t flags = ap[0];
+            if (flags & 0x10) return 2;       // ma współrzędne → wysoki
+            uint8_t advType = flags & 0x0F;
+            if (advType == 2) return 1;       // REPEATER → średni (zostaje dopóki są ramki sterujące)
+        }
+        return 0;  // inny ADVERT bez pozycji → niski
+    }
+
+    // TXT_MSG (0x02): z tekstem → wysoki, pusty → niski
+    if (mc.payloadType == 0x02) {
+        return (pkt.len > mc.payloadOffset + 5) ? 2 : 0;
+    }
+
+    // ACK, REQ, PATH, TRACE, CONTROL... → niski (usuwane jako pierwsze)
+    return 0;
 }
 
 // ––– Klasyfikator protokołu –––
@@ -740,9 +772,27 @@ void lora_process() {
         statsLiveCounter++;  // per-minute stats
         currentRssi   = pkt.rssi;
 
-        // Wrzuć do kolejki
-        if (!packetQueue.push(pkt)) {
-            Serial.println(F("[LoRa] WARN: packet queue full, frame dropped"));
+        // Wrzuć do kolejki (z inteligentnym usuwaniem)
+        // Priorytety: 0=sterujące/nieznane → 1=REPEATER → 2=pozycja/tekst
+        bool queued = packetQueue.push(pkt);
+        if (!queued) {
+            for (int prio = 0; prio <= 1 && !queued; prio++) {
+                for (size_t i = 0; i < packetQueue.count(); i++) {
+                    LoraPacket existing;
+                    if (packetQueue.peekAt(i, existing) && packet_priority(existing) == prio) {
+                        packetQueue.removeAt(i);
+                        Serial.printf("[LoRa] Evict prio=%d idx=%u\n", prio, i);
+                        queued = packetQueue.push(pkt);
+                        break;
+                    }
+                }
+            }
+            if (!queued) {
+                // Wszystkie ramki prio 2 — evict najstarszej
+                packetQueue.forcePush(pkt);
+                Serial.println(F("[LoRa] Evict: wszystkie prio=2 — usunięto najstarszą"));
+                queued = true;
+            }
         }
 
         // Non-blocking LED blink (30ms)

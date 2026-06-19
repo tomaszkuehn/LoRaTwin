@@ -28,6 +28,15 @@ public:
         return true;
     }
 
+    // Push z usunięciem najstarszego jeśli pełny
+    bool forcePush(const T& item) {
+        if (_count >= CAPACITY) {
+            _head = (_head + 1) % CAPACITY;
+            _count--;
+        }
+        return push(item);
+    }
+
     bool pop(T& item) {
         if (_count == 0) return false;
         item = _buf[_head];
@@ -42,13 +51,40 @@ public:
         return true;
     }
 
+    // Podgląd elementu po indeksie (0 = najstarszy)
+    bool peekAt(size_t index, T& item) const {
+        if (index >= _count) return false;
+        size_t idx = (_head + index) % CAPACITY;
+        item = _buf[idx];
+        return true;
+    }
+
+    // Usuń element po indeksie (przesuwa kolejne elementy)
+    bool removeAt(size_t index) {
+        if (index >= _count) return false;
+        if (index == 0) {
+            _head = (_head + 1) % CAPACITY;
+            _count--;
+            return true;
+        }
+        // Przesuń elementy za usuwanym o jedno miejsce wstecz
+        for (size_t i = index; i < _count - 1; i++) {
+            size_t idxDst = (_head + i) % CAPACITY;
+            size_t idxSrc = (_head + i + 1) % CAPACITY;
+            _buf[idxDst] = _buf[idxSrc];
+        }
+        _count--;
+        return true;
+    }
+
     size_t count() const { return _count; }
+    size_t capacity() const { return CAPACITY; }
     bool   isEmpty() const { return _count == 0; }
     void   clear() { _head = _count = 0; }
 };
 
 // ––– Stan globalny –––
-extern PacketRing<LoraPacket, 64> packetQueue;  // zwiększono z 16 na 64
+extern PacketRing<LoraPacket, 256> packetQueue;  // 256 ramek (~70 KB RAM)
 extern volatile bool               packetReceived;
 extern uint32_t                    packetCount;
 extern uint32_t                    crcFailCount;
@@ -126,7 +162,7 @@ void decode_payload_summary(const uint8_t* data, uint8_t len,
                             const MeshCoreInfo& info, char* buf, size_t bufSize);
 
 // ––– Log zdarzeń –––
-#define LOG_CAPACITY 64
+#define LOG_CAPACITY 128
 #define LOG_DATA_MAX 255      // max bajtów do podglądu w logu
 struct LogEntry {
     uint32_t timestamp;       // millis() w momencie zdarzenia
@@ -155,7 +191,7 @@ extern ProtoType     lastProto; // protokół ostatniej ramki
 extern MeshCoreInfo  lastMcInfo; // zdekodowany nagłówek MeshCore
 
 // ––– Uproszczony log (tylko TX/RX, route, payload, hops, text) –––
-#define SIMPLE_LOG_CAPACITY 64
+#define SIMPLE_LOG_CAPACITY 256
 struct SimpleLogEntry {
     uint32_t timestamp;       // millis() w momencie zdarzenia
     char     type;            // 'R'=RX, 'T'=TX

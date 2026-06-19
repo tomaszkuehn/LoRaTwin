@@ -926,6 +926,7 @@ async function refreshLog() {
 // --- WiFi Config ---
 let currentWifiMode = 0;
 
+// Pełne wczytanie formularza (tylko przy starcie i po zapisie)
 async function loadWifiConfig() {
   try {
     const r = await fetch('/api/wifi'); const d = await r.json();
@@ -936,6 +937,18 @@ async function loadWifiConfig() {
     onWifiModeChange();
     updateWifiLive(d);
   } catch(e) { console.error('WiFi load error', e); }
+}
+
+// Lekkie odświeżenie — tylko status, NIE nadpisuje formularza
+async function refreshWifiLive() {
+  // Jeśli użytkownik edytuje formularz — nie przeszkadzaj
+  if (document.activeElement === $('wifiSsid') ||
+      document.activeElement === $('wifiPass') ||
+      document.activeElement === $('wifiMode')) return;
+  try {
+    const r = await fetch('/api/wifi'); const d = await r.json();
+    updateWifiLive(d);
+  } catch(e) { /* ciche niepowodzenie */ }
 }
 
 function onWifiModeChange() {
@@ -1495,7 +1508,7 @@ setInterval(updateLastTx, 2000);
 setInterval(refreshDeviceStats, 5000);
 setInterval(refreshSimpleLog, 5000);
 setInterval(refreshLog, 30000);
-setInterval(loadWifiConfig, 30000);
+setInterval(refreshWifiLive, 10000);  // tylko status, nie nadpisuje formularza
 </script>
 </body>
 </html>
