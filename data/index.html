@@ -1126,33 +1126,43 @@ function updateNodePositions(events) {
 }
 
 // Canvas map state
-let mapCtx, mapCanvas, mapPanX = 0, mapPanY = 0, mapZoom = 2;
+let mapCtx, mapCanvas, mapPanX = 0, mapPanY = 0;
+let mapZoom = 2;          // float zoom for smooth pinch
 let mapDragging = false, mapDragX, mapDragY, mapDragMx, mapDragMy;
+// Touch state
+let touchPinchDist = 0;   // initial finger distance
+let touchPinchZ = 0;      // mapZoom at pinch start
 const tileCache = new Map();
 const TILE_SIZE = 256;
+
+// Get canvas-relative coords from a touch or mouse event
+function canvasPosFromClient(clientX, clientY) {
+  const r = mapCanvas.getBoundingClientRect();
+  return { x: clientX - r.left, y: clientY - r.top };
+}
 
 function initMap() {
   mapCanvas = $('mapCanvas');
   if (!mapCanvas) return;
   mapCtx = mapCanvas.getContext('2d');
+  mapCanvas.style.touchAction = 'none';
   // Center world initially
   const initWorld = Math.pow(2, mapZoom) * TILE_SIZE;
   mapPanX = initWorld/2 - mapCanvas.clientWidth/2;
   mapPanY = initWorld/2 - mapCanvas.clientHeight/2;
 
-  function canvasPos(e) {
-    const r = mapCanvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  }
+  // ---- Mouse events ----
   mapCanvas.addEventListener('mousedown', e => {
-    const p = canvasPos(e);
+    if (e.button !== 0) return;  // only left button
+    const p = canvasPosFromClient(e.clientX, e.clientY);
     mapDragging = true; mapDragX = mapPanX; mapDragY = mapPanY;
     mapDragMx = p.x; mapDragMy = p.y;
     mapCanvas.style.cursor = 'grabbing';
+    e.preventDefault();
   });
   mapCanvas.addEventListener('mousemove', e => {
     if (!mapDragging) return;
-    const p = canvasPos(e);
+    const p = canvasPosFromClient(e.clientX, e.clientY);
     mapPanX = mapDragX - (p.x - mapDragMx);
     mapPanY = mapDragY - (p.y - mapDragMy);
     drawMap();
@@ -1161,17 +1171,88 @@ function initMap() {
   mapCanvas.addEventListener('mouseleave', () => { mapDragging = false; mapCanvas.style.cursor = 'grab'; });
   mapCanvas.addEventListener('wheel', e => {
     e.preventDefault();
-    const p = canvasPos(e);
-    const oldZ = mapZoom;
-    const newZ = Math.max(2, Math.min(16, oldZ + (e.deltaY < 0 ? 1 : -1)));
-    if (oldZ === newZ) return;
-    const wx = p.x + mapPanX, wy = p.y + mapPanY;
-    const scale = Math.pow(2, newZ - oldZ);
-    mapPanX = wx * scale - p.x;
-    mapPanY = wy * scale - p.y;
-    mapZoom = newZ;
-    drawMap();
+    const p = canvasPosFromClient(e.clientX, e.clientY);
+    zoomAtPoint(p.x, p.y, e.deltaY < 0 ? 1 : -1);
   });
+
+  // ---- Touch events ----
+  mapCanvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      // Single finger — start pan
+      mapDragging = true;
+      const p = canvasPosFromClient(e.touches[0].clientX, e.touches[0].clientY);
+      mapDragX = mapPanX; mapDragY = mapPanY;
+      mapDragMx = p.x; mapDragMy = p.y;
+    } else if (e.touches.length >= 2) {
+      // Two fingers — start pinch
+      mapDragging = false;
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dx = t1.clientX - t0.clientX;
+      const dy = t1.clientY - t0.clientY;
+      touchPinchDist = Math.sqrt(dx*dx + dy*dy);
+      touchPinchZ    = mapZoom;
+    }
+  }, { passive: false });
+
+  mapCanvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 1 && mapDragging) {
+      // Single finger — pan
+      const p = canvasPosFromClient(e.touches[0].clientX, e.touches[0].clientY);
+      mapPanX = mapDragX - (p.x - mapDragMx);
+      mapPanY = mapDragY - (p.y - mapDragMy);
+      drawMap();
+    } else if (e.touches.length >= 2 && touchPinchDist > 0) {
+      // Two fingers — zoom centered on canvas center
+      const t0 = e.touches[0], t1 = e.touches[1];
+      const dx = t1.clientX - t0.clientX;
+      const dy = t1.clientY - t0.clientY;
+      const curDist = Math.sqrt(dx*dx + dy*dy);
+
+      if (curDist > 20) {
+        const totalDelta = (curDist - touchPinchDist) / 120;
+        const targetZ = Math.max(2, Math.min(16, touchPinchZ + totalDelta));
+        if (Math.abs(targetZ - mapZoom) > 0.001) {
+          zoomAtPoint(mapCanvas.clientWidth / 2, mapCanvas.clientHeight / 2, targetZ - mapZoom);
+        }
+      }
+    }
+  }, { passive: false });
+
+  mapCanvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      mapDragging = false;
+      touchPinchDist = 0;
+    }
+    // If one finger remains, transition to pan at current position
+    if (e.touches.length === 1) {
+      touchPinchDist = 0;
+      mapDragging = true;
+      const p = canvasPosFromClient(e.touches[0].clientX, e.touches[0].clientY);
+      mapDragX = mapPanX; mapDragY = mapPanY;
+      mapDragMx = p.x; mapDragMy = p.y;
+    }
+  }, { passive: false });
+
+  mapCanvas.addEventListener('touchcancel', () => {
+    mapDragging = false;
+    touchPinchDist = 0;
+  });
+}
+
+// Zoom by `steps` levels at the given canvas point (float, smooth)
+function zoomAtPoint(cx, cy, steps) {
+  const oldZ = mapZoom;
+  const newZ = Math.max(2, Math.min(16, oldZ + steps));
+  if (Math.abs(newZ - oldZ) < 0.001) return;
+  const scale = Math.pow(2, newZ - oldZ);
+  const wx = cx + mapPanX, wy = cy + mapPanY;
+  mapPanX = wx * scale - cx;
+  mapPanY = wy * scale - cy;
+  mapZoom = newZ;
+  drawMap();
 }
 
 function lon2world(lon, z) { return (lon + 180) / 360 * Math.pow(2, z) * TILE_SIZE; }
@@ -1196,26 +1277,30 @@ async function drawMap() {
   const w = mapCanvas.width = mapCanvas.clientWidth;
   const h = mapCanvas.height = mapCanvas.clientHeight;
   const ctx = mapCtx;
-  const z = mapZoom;
-  const worldPx = Math.pow(2, z) * TILE_SIZE;
+  const zf = mapZoom;
+  const z  = Math.max(2, Math.min(16, Math.round(zf)));  // tile zoom level
+  const tileScale = Math.pow(2, zf - z);                  // scale tiles to float zoom
 
   ctx.fillStyle = '#1a2a3a'; ctx.fillRect(0, 0, w, h);
 
-  // Visible tile range: canvas pixel -> world pixel -> tile index
-  const tx0 = Math.floor(mapPanX / TILE_SIZE);
-  const ty0 = Math.floor(mapPanY / TILE_SIZE);
-  const tx1 = Math.floor((mapPanX + w) / TILE_SIZE);
-  const ty1 = Math.floor((mapPanY + h) / TILE_SIZE);
+  // Visible tile range in integer zoom coords
+  const panZx = mapPanX / tileScale;
+  const panZy = mapPanY / tileScale;
+  const tx0 = Math.floor(panZx / TILE_SIZE);
+  const ty0 = Math.floor(panZy / TILE_SIZE);
+  const tx1 = Math.floor((panZx + w / tileScale) / TILE_SIZE);
+  const ty1 = Math.floor((panZy + h / tileScale) / TILE_SIZE);
   const maxTile = Math.pow(2, z) - 1;
+  const drawSz = Math.ceil(TILE_SIZE * tileScale) + 1;  // +1px bleed prevents gaps
 
   const promises = [];
   for (let tx = Math.max(0, tx0); tx <= Math.min(maxTile, tx1); tx++) {
     for (let ty = Math.max(0, ty0); ty <= Math.min(maxTile, ty1); ty++) {
-      const sx = tx * TILE_SIZE - mapPanX;
-      const sy = ty * TILE_SIZE - mapPanY;
+      const sx = tx * TILE_SIZE * tileScale - mapPanX;
+      const sy = ty * TILE_SIZE * tileScale - mapPanY;
       const purl = `https://tile.openstreetmap.org/${z}/${tx}/${ty}.png`;
       const p = loadTile(purl).then(img => {
-        if (img) ctx.drawImage(img, Math.round(sx), Math.round(sy), TILE_SIZE, TILE_SIZE);
+        if (img) ctx.drawImage(img, Math.floor(sx), Math.floor(sy), drawSz, drawSz);
       });
       promises.push(p);
     }
@@ -1224,11 +1309,11 @@ async function drawMap() {
 
   // Draw nodes
   const nodes = [...nodePositions.values()];
-  $('mapInfo').textContent = nodes.length + ' node' + (nodes.length !== 1 ? 's' : '') + ' | zoom=' + z;
+  $('mapInfo').textContent = nodes.length + ' node' + (nodes.length !== 1 ? 's' : '') + ' | zoom=' + zf.toFixed(1);
 
   for (const n of nodes) {
-    const x = lon2world(n.lon, z) - mapPanX;
-    const y = lat2world(n.lat, z) - mapPanY;
+    const x = lon2world(n.lon, zf) - mapPanX;
+    const y = lat2world(n.lat, zf) - mapPanY;
     if (x < -20 || x > w+20 || y < -20 || y > h+20) continue;
 
     const r = Math.max(3, z-2);

@@ -556,6 +556,16 @@ bool lora_init() {
 }
 
 bool lora_reinit() {
+    // Hardware reset SX1262 — ensures clean state regardless of ESP32 reset type.
+    // The radio is a separate chip; a warm ESP32 reset (RTS toggle after upload)
+    // does NOT power-cycle it, so it may be stuck in TX, with a hung BUSY pin,
+    // or in an otherwise broken SPI state.
+    pinMode(PIN_LORA_RST, OUTPUT);
+    digitalWrite(PIN_LORA_RST, LOW);
+    delay(10);
+    digitalWrite(PIN_LORA_RST, HIGH);
+    delay(10);
+
     // Pobierz aktualne parametry z ustawień
     uint8_t syncWord;
     if (g_settings.profile == PROFILE_MESHCORE) {
